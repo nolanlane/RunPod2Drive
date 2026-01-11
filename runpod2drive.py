@@ -60,6 +60,7 @@ CREDENTIALS_FILE = find_credentials_file()
 # Upload settings
 CHUNK_SIZE = 25 * 1024 * 1024  # 25MB chunks
 MAX_WORKERS = 3  # Reduced parallel threads to avoid API issues
+SAFE_ROOT = os.environ.get('SAFE_ROOT', '/workspace')
 
 # Cache for folder IDs to avoid repeated lookups
 folder_cache = {}
@@ -234,6 +235,22 @@ def get_credentials() -> Optional[Credentials]:
 def is_authenticated() -> bool:
     """Check if user is authenticated with Google Drive"""
     return get_credentials() is not None
+
+
+def is_safe_path(path: str) -> bool:
+    """Check if path is within safe root directory"""
+    safe_root = os.path.abspath(SAFE_ROOT)
+    target_path = os.path.abspath(path)
+
+    # Check if path exists first to resolve symlinks properly if needed,
+    # but os.path.abspath handles .. and symlinks to some extent.
+    # However, commonpath is the standard way to check this.
+    try:
+        common = os.path.commonpath([safe_root, target_path])
+        return common == safe_root
+    except ValueError:
+        # Can happen on Windows if drives are different
+        return False
 
 
 def should_exclude(file_path: str, exclusions: List[str], include_hidden: bool) -> bool:
@@ -851,6 +868,9 @@ def api_scan():
     
     if not os.path.exists(source_path):
         return jsonify({'error': f'Path does not exist: {source_path}'}), 400
+
+    if not is_safe_path(source_path):
+        return jsonify({'error': 'Path is outside allowed directory'}), 403
     
     files = get_files_to_upload(source_path, exclusions, include_hidden, max_size_mb)
     
@@ -949,6 +969,9 @@ def api_browse():
     if not os.path.isdir(path):
         return jsonify({'error': 'Not a directory'}), 400
     
+    if not is_safe_path(path):
+        return jsonify({'error': 'Access denied: Path is outside allowed directory'}), 403
+
     items = []
     try:
         for name in sorted(os.listdir(path)):
