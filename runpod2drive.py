@@ -18,6 +18,9 @@ from dataclasses import dataclass, asdict
 from typing import Optional, List, Dict, Any
 import mimetypes
 
+# Allow OAuth over HTTP for development (RunPod internal network)
+os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
+
 from flask import Flask, render_template, request, jsonify, redirect, url_for, session
 from flask_socketio import SocketIO, emit
 from google.oauth2.credentials import Credentials
@@ -521,13 +524,18 @@ def auth_callback():
     if 'oauth_state' not in session:
         return redirect('/?error=invalid_state')
     
+    # Extract state from request and validate it
+    returned_state = request.args.get('state')
+    
+    if returned_state != session['oauth_state']:
+        return redirect('/?error=invalid_state')
+    
     redirect_uri = session.get('redirect_uri')
     
     flow = Flow.from_client_secrets_file(
         CREDENTIALS_FILE,
         scopes=SCOPES,
-        redirect_uri=redirect_uri,
-        state=session['oauth_state']
+        redirect_uri=redirect_uri
     )
     
     try:
