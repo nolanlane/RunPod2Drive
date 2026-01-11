@@ -33,9 +33,23 @@ socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
 
 # Configuration
 SCOPES = ['https://www.googleapis.com/auth/drive.file']
-CREDENTIALS_FILE = 'credentials.json'
 TOKEN_FILE = 'token.json'
 CONFIG_FILE = 'config.json'
+
+# Look for credentials.json in multiple locations
+def find_credentials_file():
+    locations = [
+        'credentials.json',
+        '/workspace/credentials.json',
+        os.path.join(os.path.dirname(__file__), 'credentials.json'),
+        os.path.expanduser('~/credentials.json'),
+    ]
+    for loc in locations:
+        if os.path.exists(loc):
+            return loc
+    return 'credentials.json'  # Default, will show warning if not found
+
+CREDENTIALS_FILE = find_credentials_file()
 
 # Global state
 upload_state = {
@@ -473,9 +487,15 @@ def auth_start():
     if not os.path.exists(CREDENTIALS_FILE):
         return jsonify({'error': 'credentials.json not found'}), 400
     
-    # Get the host from request for redirect URI
-    host = request.host
-    redirect_uri = f"http://{host}/api/auth/callback"
+    # Use PUBLIC_URL env var if set, otherwise try to detect from request
+    public_url = os.environ.get('PUBLIC_URL', '').rstrip('/')
+    if public_url:
+        redirect_uri = f"{public_url}/api/auth/callback"
+    else:
+        # Try to use X-Forwarded headers from proxy
+        proto = request.headers.get('X-Forwarded-Proto', 'http')
+        host = request.headers.get('X-Forwarded-Host', request.host)
+        redirect_uri = f"{proto}://{host}/api/auth/callback"
     
     flow = Flow.from_client_secrets_file(
         CREDENTIALS_FILE,
