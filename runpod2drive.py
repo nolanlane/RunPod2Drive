@@ -54,6 +54,12 @@ def find_credentials_file():
 
 CREDENTIALS_FILE = find_credentials_file()
 
+# Upload chunk size (10MB for faster uploads)
+CHUNK_SIZE = 10 * 1024 * 1024
+
+# Cache for folder IDs to avoid repeated lookups
+folder_cache = {}
+
 # Global state
 upload_state = {
     'is_running': False,
@@ -270,7 +276,11 @@ def get_files_to_upload(source_path: str, exclusions: List[str],
 
 
 def get_or_create_folder(service, folder_name: str, parent_id: str = None) -> str:
-    """Get or create a folder in Google Drive"""
+    """Get or create a folder in Google Drive (with caching)"""
+    cache_key = f"{parent_id}:{folder_name}"
+    if cache_key in folder_cache:
+        return folder_cache[cache_key]
+    
     query = f"name='{folder_name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
     if parent_id:
         query += f" and '{parent_id}' in parents"
@@ -279,6 +289,7 @@ def get_or_create_folder(service, folder_name: str, parent_id: str = None) -> st
     items = results.get('files', [])
     
     if items:
+        folder_cache[cache_key] = items[0]['id']
         return items[0]['id']
     
     file_metadata = {
@@ -289,6 +300,7 @@ def get_or_create_folder(service, folder_name: str, parent_id: str = None) -> st
         file_metadata['parents'] = [parent_id]
     
     folder = service.files().create(body=file_metadata, fields='id').execute()
+    folder_cache[cache_key] = folder.get('id')
     return folder.get('id')
 
 
@@ -326,7 +338,7 @@ def upload_file_to_drive(service, file_path: str, rel_path: str,
             else:
                 service.files().create(body=file_metadata, fields='id').execute()
         else:
-            media = MediaFileUpload(file_path, mimetype=mime_type, resumable=True)
+            media = MediaFileUpload(file_path, mimetype=mime_type, resumable=True, chunksize=CHUNK_SIZE)
             
             if existing:
                 request = service.files().update(fileId=existing[0]['id'], media_body=media)
@@ -334,12 +346,16 @@ def upload_file_to_drive(service, file_path: str, rel_path: str,
                 request = service.files().create(body=file_metadata, media_body=media, fields='id')
             
             response = None
+            last_uploaded = 0
             while response is None:
                 if upload_state['cancel_requested']:
                     return False
                 status, response = request.next_chunk()
                 if status and progress_callback:
-                    progress_callback(int(status.progress() * file_size))
+                    current_uploaded = int(status.progress() * file_size)
+                    incremental_bytes = current_uploaded - last_uploaded
+                    last_uploaded = current_uploaded
+                    progress_callback(incremental_bytes)
         
         return True
     except HttpError as e:
