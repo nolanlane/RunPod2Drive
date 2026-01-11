@@ -313,21 +313,27 @@ def get_or_create_folder(service, folder_name: str, parent_id: str = None) -> st
 
 
 def prebuild_folder_structure(service, files: List[Dict], root_folder_id: str):
-    """Pre-create all folder structures before uploading (reduces API calls during upload)"""
-    folders_needed = set()
+    """Pre-create folder structures - optimized to only create first-level folders in parallel"""
+    # Get unique first-level folders only (depth 1)
+    first_level = set()
     for f in files:
-        parts = Path(f['rel_path']).parts[:-1]  # Exclude filename
-        for i in range(len(parts)):
-            folders_needed.add('/'.join(parts[:i+1]))
+        parts = Path(f['rel_path']).parts[:-1]
+        if parts:
+            first_level.add(parts[0])
     
-    # Sort by depth to create parent folders first
-    sorted_folders = sorted(folders_needed, key=lambda x: x.count('/'))
+    if not first_level:
+        return
     
-    for folder_path in sorted_folders:
-        parts = folder_path.split('/')
-        parent_id = root_folder_id
-        for folder_name in parts:
-            parent_id = get_or_create_folder(service, folder_name, parent_id)
+    socketio.emit('upload_status', {'message': f'Creating {len(first_level)} top-level folders...'})
+    
+    # Create first-level folders in parallel
+    def create_folder(folder_name):
+        return get_or_create_folder(service, folder_name, root_folder_id)
+    
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        list(executor.map(create_folder, first_level))
+    
+    # Subfolders will be created on-demand during upload (cached after first creation)
 
 
 def upload_single_file(service, file_info: Dict, root_folder_id: str) -> Dict:
