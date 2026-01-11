@@ -429,6 +429,27 @@
                     <p class="mt-1 text-sm text-gray-500">Files will be restored to: <span id="restore-full-path" class="font-mono">/workspace/[folder_name]</span></p>
                 </div>
 
+                <!-- Restore Mode -->
+                <div class="mb-6">
+                    <label class="block text-sm font-medium text-gray-700 mb-3">Restore Mode</label>
+                    <div class="flex gap-4">
+                        <label class="flex items-center gap-2 cursor-pointer p-3 border rounded-lg flex-1 hover:bg-gray-50 transition-colors" onclick="setRestoreMode('folder')">
+                            <input type="radio" name="restore-mode" value="folder" checked class="text-blue-600">
+                            <div>
+                                <div class="font-medium text-gray-800">Copy folder</div>
+                                <div class="text-xs text-gray-500">Creates /dest/<strong>FolderName</strong>/files...</div>
+                            </div>
+                        </label>
+                        <label class="flex items-center gap-2 cursor-pointer p-3 border rounded-lg flex-1 hover:bg-gray-50 transition-colors" onclick="setRestoreMode('contents')">
+                            <input type="radio" name="restore-mode" value="contents" class="text-blue-600">
+                            <div>
+                                <div class="font-medium text-gray-800">Copy contents only</div>
+                                <div class="text-xs text-gray-500">Creates /dest/files... directly</div>
+                            </div>
+                        </label>
+                    </div>
+                </div>
+
                 <button onclick="startRestore()" id="start-restore-btn" disabled class="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white font-medium py-3 px-6 rounded-xl transition-colors flex items-center justify-center gap-2">
                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10"/>
@@ -592,6 +613,7 @@
         let browserMode = 'upload'; // 'upload' or 'restore'
         let driveFolderStack = []; // Navigation history for Drive browser
         let selectedDriveFolder = null;
+        let restoreMode = 'folder'; // 'folder' or 'contents'
 
         // Initialize
         document.addEventListener('DOMContentLoaded', () => {
@@ -1191,7 +1213,16 @@
         function updateRestoreFullPath() {
             const destPath = document.getElementById('restore-dest-path').value || '/workspace';
             const folderName = document.getElementById('restore-folder-name').value || '[folder_name]';
-            document.getElementById('restore-full-path').textContent = `${destPath}/${folderName}`;
+            if (restoreMode === 'contents') {
+                document.getElementById('restore-full-path').textContent = `${destPath}/`;
+            } else {
+                document.getElementById('restore-full-path').textContent = `${destPath}/${folderName}/`;
+            }
+        }
+
+        function setRestoreMode(mode) {
+            restoreMode = mode;
+            updateRestoreFullPath();
         }
 
         // Restore functions
@@ -1212,7 +1243,8 @@
                     body: JSON.stringify({
                         folder_id: folderId,
                         folder_name: folderName,
-                        dest_path: destPath
+                        dest_path: destPath,
+                        contents_only: restoreMode === 'contents'
                     })
                 });
                 const data = await resp.json();
@@ -1319,6 +1351,8 @@
             document.getElementById('restore-folder-name').value = '';
             document.getElementById('start-restore-btn').disabled = true;
             restoreStartTime = null;
+            restoreMode = 'folder';
+            document.querySelector('input[name="restore-mode"][value="folder"]').checked = true;
             // Reset progress indicators
             document.getElementById('restore-progress-bar').style.width = '0%';
             document.getElementById('restore-progress-percent').textContent = '0%';

@@ -612,7 +612,7 @@ def download_single_file(service, file_info: Dict, dest_path: str) -> Dict:
         return {'success': False, 'file': rel_path, 'size': file_size, 'error': str(e)}
 
 
-def run_restore(folder_id: str, folder_name: str, dest_path: str):
+def run_restore(folder_id: str, folder_name: str, dest_path: str, contents_only: bool = False):
     """Main restore function running in background thread"""
     global restore_state
     
@@ -646,7 +646,12 @@ def run_restore(folder_id: str, folder_name: str, dest_path: str):
         })
         
         # Create destination directory
-        full_dest = os.path.join(dest_path, folder_name)
+        # contents_only=True: files go directly to dest_path (preserving internal structure)
+        # contents_only=False: files go to dest_path/folder_name/ (wrapped in folder)
+        if contents_only:
+            full_dest = dest_path
+        else:
+            full_dest = os.path.join(dest_path, folder_name)
         os.makedirs(full_dest, exist_ok=True)
         
         socketio.emit('restore_status', {'message': f'Downloading {len(files)} files...'})
@@ -998,6 +1003,7 @@ def api_restore_start():
     folder_id = data.get('folder_id')
     folder_name = data.get('folder_name', 'restored_backup')
     dest_path = data.get('dest_path', '/workspace')
+    contents_only = data.get('contents_only', False)
     
     if not folder_id:
         return jsonify({'error': 'No folder selected'}), 400
@@ -1017,7 +1023,7 @@ def api_restore_start():
     })
     
     # Start restore in background thread
-    thread = threading.Thread(target=run_restore, args=(folder_id, folder_name, dest_path))
+    thread = threading.Thread(target=run_restore, args=(folder_id, folder_name, dest_path, contents_only))
     thread.daemon = True
     thread.start()
     
