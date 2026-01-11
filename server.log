@@ -1,0 +1,26 @@
+nohup: ignoring input
+
+╔══════════════════════════════════════════════════════════════╗
+║                      RunPod2Drive                            ║
+║          Upload your RunPod files to Google Drive            ║
+╠══════════════════════════════════════════════════════════════╣
+║  Starting server on http://0.0.0.0:7860                    ║
+║                                                              ║
+║  Make sure credentials.json is in the same directory.       ║
+╚══════════════════════════════════════════════════════════════╝
+
+⚠️  Warning: credentials.json not found!
+   Please add your Google OAuth credentials file.
+   Get it from: https://console.cloud.google.com/apis/credentials
+Traceback (most recent call last):
+  File "/home/nolan/RunPod2Drive/runpod2drive.py", line 725, in <module>
+    main()
+    ~~~~^^
+  File "/home/nolan/RunPod2Drive/runpod2drive.py", line 721, in main
+    socketio.run(app, host=args.host, port=args.port, debug=args.debug)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/nolan/.local/lib/python3.14/site-packages/flask_socketio/__init__.py", line 649, in run
+    raise RuntimeError('The Werkzeug web server is not '
+    ...<2 lines>...
+                       'run() method to disable this error.')
+RuntimeError: The Werkzeug web server is not designed to run in production. Pass allow_unsafe_werkzeug=True to the run() method to disable this error.

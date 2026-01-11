@@ -1,0 +1,900 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RunPod2Drive - Upload to Google Drive</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                    },
+                }
+            }
+        }
+    </script>
+    <style>
+        .gradient-bg {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+        .card-shadow {
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.1);
+        }
+        .progress-bar {
+            transition: width 0.3s ease;
+        }
+        .fade-in {
+            animation: fadeIn 0.3s ease-in-out;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .pulse-dot {
+            animation: pulse 2s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        .file-list {
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        .tag {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 4px 10px;
+            background: #e0e7ff;
+            border-radius: 9999px;
+            font-size: 0.875rem;
+            color: #4338ca;
+        }
+        .tag button {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            background: #c7d2fe;
+        }
+        .tag button:hover {
+            background: #a5b4fc;
+        }
+    </style>
+</head>
+<body class="bg-gray-50 font-sans min-h-screen">
+    <!-- Header -->
+    <header class="gradient-bg text-white py-6 px-4 shadow-lg">
+        <div class="max-w-5xl mx-auto">
+            <div class="flex items-center justify-between">
+                <div class="flex items-center gap-3">
+                    <svg class="w-10 h-10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/>
+                        <polyline points="14 2 14 8 20 8"/>
+                        <path d="M12 18v-6"/>
+                        <path d="m9 15 3-3 3 3"/>
+                    </svg>
+                    <div>
+                        <h1 class="text-2xl font-bold">RunPod2Drive</h1>
+                        <p class="text-sm text-purple-200">Upload your RunPod files to Google Drive</p>
+                    </div>
+                </div>
+                <div id="auth-status" class="flex items-center gap-2">
+                    <!-- Auth status will be populated by JS -->
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <main class="max-w-5xl mx-auto py-8 px-4">
+        <!-- Auth Section -->
+        <section id="auth-section" class="mb-8 hidden">
+            <div class="bg-white rounded-2xl p-6 card-shadow fade-in">
+                <div class="flex items-center gap-4 mb-4">
+                    <div class="w-12 h-12 rounded-full bg-red-100 flex items-center justify-center">
+                        <svg class="w-6 h-6 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m0 0v2m0-2h2m-2 0H10m4-6V9a4 4 0 00-8 0v4h8z"/>
+                        </svg>
+                    </div>
+                    <div>
+                        <h2 class="text-xl font-semibold text-gray-800">Connect Google Drive</h2>
+                        <p class="text-gray-500">Authorize access to upload files to your Drive</p>
+                    </div>
+                </div>
+                
+                <div id="no-credentials" class="hidden bg-amber-50 border border-amber-200 rounded-lg p-4 mb-4">
+                    <div class="flex items-start gap-3">
+                        <svg class="w-5 h-5 text-amber-600 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+                        </svg>
+                        <div>
+                            <h3 class="font-medium text-amber-800">credentials.json not found</h3>
+                            <p class="text-sm text-amber-700 mt-1">
+                                Please add your Google OAuth credentials file to the same directory as this script.
+                                <a href="https://console.cloud.google.com/apis/credentials" target="_blank" class="underline hover:text-amber-900">Get it here</a>
+                            </p>
+                        </div>
+                    </div>
+                </div>
+                
+                <button id="auth-btn" onclick="startAuth()" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-3 px-6 rounded-xl transition-colors flex items-center justify-center gap-2">
+                    <svg class="w-5 h-5" viewBox="0 0 24 24">
+                        <path fill="currentColor" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+                        <path fill="currentColor" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+                        <path fill="currentColor" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
+                        <path fill="currentColor" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
+                    </svg>
+                    Connect with Google
+                </button>
+            </div>
+        </section>
+
+        <!-- Configuration Section -->
+        <section id="config-section" class="mb-8 hidden">
+            <div class="bg-white rounded-2xl p-6 card-shadow fade-in">
+                <h2 class="text-xl font-semibold text-gray-800 mb-6 flex items-center gap-2">
+                    <svg class="w-6 h-6 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
+                        <circle cx="12" cy="12" r="3"/>
+                    </svg>
+                    Upload Settings
+                </h2>
+
+                <!-- Preset Selection -->
+                <div class="mb-6">
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Quick Presets</label>
+                    <div class="grid grid-cols-2 md:grid-cols-5 gap-2">
+                        <button onclick="applyPreset('default')" data-preset="default" class="preset-btn px-4 py-2 rounded-lg border-2 border-gray-200 hover:border-indigo-400 transition-colors text-sm font-medium">
+                            Default
+                        </button>
+                        <button onclick="applyPreset('ml_training')" data-preset="ml_training" class="preset-btn px-4 py-2 rounded-lg border-2 border-gray-200 hover:border-indigo-400 transition-colors text-sm font-medium">
+                            ML Training
+                        </button>
+                        <button onclick="applyPreset('full_backup')" data-preset="full_backup" class="preset-btn px-4 py-2 rounded-lg border-2 border-gray-200 hover:border-indigo-400 transition-colors text-sm font-medium">
+                            Full Backup
+                        </button>
+                        <button onclick="applyPreset('code_only')" data-preset="code_only" class="preset-btn px-4 py-2 rounded-lg border-2 border-gray-200 hover:border-indigo-400 transition-colors text-sm font-medium">
+                            Code Only
+                        </button>
+                        <button onclick="applyPreset('minimal')" data-preset="minimal" class="preset-btn px-4 py-2 rounded-lg border-2 border-gray-200 hover:border-indigo-400 transition-colors text-sm font-medium">
+                            Minimal
+                        </button>
+                    </div>
+                    <p id="preset-description" class="mt-2 text-sm text-gray-500"></p>
+                </div>
+
+                <!-- Source Path -->
+                <div class="mb-6">
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Source Directory</label>
+                    <div class="flex gap-2">
+                        <input type="text" id="source-path" value="/workspace" 
+                            class="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">
+                        <button onclick="openBrowser()" class="px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors">
+                            <svg class="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Drive Folder Name -->
+                <div class="mb-6">
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Google Drive Folder Name</label>
+                    <input type="text" id="drive-folder" value="RunPod_Backup" 
+                        class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">
+                    <p class="mt-1 text-sm text-gray-500">Files will be uploaded to this folder in your Drive</p>
+                </div>
+
+                <!-- Exclusions -->
+                <div class="mb-6">
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Exclusion Patterns</label>
+                    <div id="exclusions-list" class="flex flex-wrap gap-2 mb-2 min-h-[40px] p-3 bg-gray-50 rounded-lg border border-gray-200">
+                        <!-- Tags will be added here -->
+                    </div>
+                    <div class="flex gap-2">
+                        <input type="text" id="new-exclusion" placeholder="Add pattern (e.g., *.log, node_modules)" 
+                            class="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                            onkeydown="if(event.key==='Enter'){addExclusion();event.preventDefault();}">
+                        <button onclick="addExclusion()" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg transition-colors">
+                            Add
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Options -->
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+                    <div>
+                        <label class="flex items-center gap-3 cursor-pointer">
+                            <input type="checkbox" id="include-hidden" class="w-5 h-5 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500">
+                            <span class="text-gray-700">Include hidden files (dotfiles)</span>
+                        </label>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-2">Max file size (MB, 0 = no limit)</label>
+                        <input type="number" id="max-size" value="0" min="0" 
+                            class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">
+                    </div>
+                </div>
+
+                <!-- Scan & Save Buttons -->
+                <div class="flex gap-3">
+                    <button onclick="scanFiles()" class="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-800 font-medium py-3 px-6 rounded-xl transition-colors flex items-center justify-center gap-2">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+                        </svg>
+                        Scan Files
+                    </button>
+                    <button onclick="saveConfig()" class="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-3 px-6 rounded-xl transition-colors flex items-center justify-center gap-2">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+                        </svg>
+                        Save Settings
+                    </button>
+                </div>
+            </div>
+        </section>
+
+        <!-- Scan Results Section -->
+        <section id="scan-results" class="mb-8 hidden">
+            <div class="bg-white rounded-2xl p-6 card-shadow fade-in">
+                <h2 class="text-xl font-semibold text-gray-800 mb-4 flex items-center gap-2">
+                    <svg class="w-6 h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/>
+                    </svg>
+                    Scan Results
+                </h2>
+                
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+                    <div class="bg-indigo-50 rounded-xl p-4 text-center">
+                        <div id="scan-files" class="text-3xl font-bold text-indigo-600">0</div>
+                        <div class="text-sm text-gray-600">Files</div>
+                    </div>
+                    <div class="bg-purple-50 rounded-xl p-4 text-center">
+                        <div id="scan-size" class="text-3xl font-bold text-purple-600">0 MB</div>
+                        <div class="text-sm text-gray-600">Total Size</div>
+                    </div>
+                    <div class="bg-pink-50 rounded-xl p-4 text-center">
+                        <div id="scan-types" class="text-3xl font-bold text-pink-600">0</div>
+                        <div class="text-sm text-gray-600">File Types</div>
+                    </div>
+                    <div class="bg-blue-50 rounded-xl p-4 text-center">
+                        <div id="scan-time" class="text-3xl font-bold text-blue-600">--</div>
+                        <div class="text-sm text-gray-600">Est. Time</div>
+                    </div>
+                </div>
+
+                <div class="mb-4">
+                    <h3 class="text-sm font-medium text-gray-700 mb-2">Sample Files</h3>
+                    <div id="sample-files" class="file-list bg-gray-50 rounded-lg p-3 text-sm font-mono text-gray-600">
+                    </div>
+                </div>
+
+                <button onclick="startUpload()" class="w-full bg-green-600 hover:bg-green-700 text-white font-medium py-4 px-6 rounded-xl transition-colors flex items-center justify-center gap-2 text-lg">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
+                    </svg>
+                    Start Upload to Google Drive
+                </button>
+            </div>
+        </section>
+
+        <!-- Upload Progress Section -->
+        <section id="upload-progress" class="mb-8 hidden">
+            <div class="bg-white rounded-2xl p-6 card-shadow fade-in">
+                <div class="flex items-center justify-between mb-4">
+                    <h2 class="text-xl font-semibold text-gray-800 flex items-center gap-2">
+                        <div id="upload-status-icon" class="w-3 h-3 rounded-full bg-green-500 pulse-dot"></div>
+                        <span id="upload-status-text">Uploading...</span>
+                    </h2>
+                    <div class="flex gap-2">
+                        <button id="pause-btn" onclick="pauseUpload()" class="px-4 py-2 bg-amber-100 hover:bg-amber-200 text-amber-700 rounded-lg transition-colors flex items-center gap-2">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                            </svg>
+                            Pause
+                        </button>
+                        <button id="cancel-btn" onclick="cancelUpload()" class="px-4 py-2 bg-red-100 hover:bg-red-200 text-red-700 rounded-lg transition-colors flex items-center gap-2">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                            </svg>
+                            Cancel
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Progress Bar -->
+                <div class="mb-6">
+                    <div class="flex justify-between text-sm text-gray-600 mb-2">
+                        <span id="progress-files">0 / 0 files</span>
+                        <span id="progress-percent">0%</span>
+                    </div>
+                    <div class="w-full bg-gray-200 rounded-full h-4 overflow-hidden">
+                        <div id="progress-bar" class="progress-bar h-full bg-gradient-to-r from-indigo-500 to-purple-500 rounded-full" style="width: 0%"></div>
+                    </div>
+                    <div class="flex justify-between text-sm text-gray-500 mt-2">
+                        <span id="progress-bytes">0 MB / 0 MB</span>
+                        <span id="progress-speed">-- MB/s</span>
+                    </div>
+                </div>
+
+                <!-- Current File -->
+                <div class="bg-gray-50 rounded-lg p-4 mb-4">
+                    <div class="text-sm text-gray-500 mb-1">Currently uploading:</div>
+                    <div id="current-file" class="font-mono text-gray-800 truncate">--</div>
+                </div>
+
+                <!-- Time Stats -->
+                <div class="grid grid-cols-2 gap-4">
+                    <div class="bg-blue-50 rounded-lg p-3 text-center">
+                        <div id="elapsed-time" class="text-xl font-bold text-blue-600">00:00:00</div>
+                        <div class="text-xs text-gray-600">Elapsed</div>
+                    </div>
+                    <div class="bg-green-50 rounded-lg p-3 text-center">
+                        <div id="remaining-time" class="text-xl font-bold text-green-600">--:--:--</div>
+                        <div class="text-xs text-gray-600">Remaining</div>
+                    </div>
+                </div>
+
+                <!-- Error Log -->
+                <div id="error-log" class="hidden mt-4">
+                    <h3 class="text-sm font-medium text-red-700 mb-2">Errors</h3>
+                    <div id="error-list" class="file-list bg-red-50 rounded-lg p-3 text-sm text-red-600">
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Complete Section -->
+        <section id="upload-complete" class="mb-8 hidden">
+            <div class="bg-white rounded-2xl p-6 card-shadow fade-in text-center">
+                <div class="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <svg class="w-10 h-10 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+                    </svg>
+                </div>
+                <h2 class="text-2xl font-bold text-gray-800 mb-2">Upload Complete!</h2>
+                <p id="complete-summary" class="text-gray-600 mb-6"></p>
+                
+                <div class="grid grid-cols-3 gap-4 mb-6">
+                    <div class="bg-gray-50 rounded-xl p-4">
+                        <div id="complete-files" class="text-2xl font-bold text-indigo-600">0</div>
+                        <div class="text-sm text-gray-600">Files Uploaded</div>
+                    </div>
+                    <div class="bg-gray-50 rounded-xl p-4">
+                        <div id="complete-size" class="text-2xl font-bold text-purple-600">0 MB</div>
+                        <div class="text-sm text-gray-600">Total Size</div>
+                    </div>
+                    <div class="bg-gray-50 rounded-xl p-4">
+                        <div id="complete-time" class="text-2xl font-bold text-blue-600">00:00</div>
+                        <div class="text-sm text-gray-600">Duration</div>
+                    </div>
+                </div>
+
+                <div id="complete-errors" class="hidden mb-6">
+                    <div class="bg-amber-50 border border-amber-200 rounded-lg p-4 text-left">
+                        <h3 class="font-medium text-amber-800 mb-2">Some files had errors</h3>
+                        <div id="complete-error-list" class="file-list text-sm text-amber-700"></div>
+                    </div>
+                </div>
+
+                <button onclick="resetUpload()" class="bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-3 px-8 rounded-xl transition-colors">
+                    Start New Upload
+                </button>
+            </div>
+        </section>
+    </main>
+
+    <!-- Folder Browser Modal -->
+    <div id="browser-modal" class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center z-50">
+        <div class="bg-white rounded-2xl p-6 w-full max-w-lg mx-4 max-h-[80vh] flex flex-col">
+            <div class="flex items-center justify-between mb-4">
+                <h3 class="text-lg font-semibold">Select Directory</h3>
+                <button onclick="closeBrowser()" class="text-gray-500 hover:text-gray-700">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                    </svg>
+                </button>
+            </div>
+            <div id="browser-path" class="text-sm text-gray-500 mb-3 font-mono bg-gray-50 p-2 rounded"></div>
+            <div id="browser-list" class="flex-1 overflow-y-auto border rounded-lg">
+            </div>
+            <div class="flex gap-3 mt-4">
+                <button onclick="closeBrowser()" class="flex-1 py-2 border border-gray-300 rounded-lg hover:bg-gray-50">Cancel</button>
+                <button onclick="selectCurrentPath()" class="flex-1 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">Select</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Global state
+        let config = {};
+        let presets = {};
+        let exclusions = [];
+        let currentBrowserPath = '/workspace';
+        let socket = null;
+        let uploadStartTime = null;
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            initSocket();
+            loadStatus();
+            
+            // Check for auth callback
+            const urlParams = new URLSearchParams(window.location.search);
+            if (urlParams.get('auth') === 'success') {
+                showToast('Successfully connected to Google Drive!', 'success');
+                window.history.replaceState({}, '', '/');
+            } else if (urlParams.get('error')) {
+                showToast('Authentication failed: ' + urlParams.get('error'), 'error');
+                window.history.replaceState({}, '', '/');
+            }
+        });
+
+        function initSocket() {
+            socket = io();
+            
+            socket.on('upload_started', (data) => {
+                uploadStartTime = Date.now();
+                showSection('upload-progress');
+            });
+            
+            socket.on('upload_progress', (data) => {
+                updateProgress(data);
+            });
+            
+            socket.on('upload_error', (data) => {
+                addError(data.message);
+            });
+            
+            socket.on('upload_complete', (data) => {
+                showComplete(data);
+            });
+            
+            socket.on('upload_status', (data) => {
+                document.getElementById('upload-status-text').textContent = data.message;
+            });
+        }
+
+        async function loadStatus() {
+            try {
+                const resp = await fetch('/api/status');
+                const data = await resp.json();
+                
+                config = data.config;
+                presets = data.presets;
+                
+                updateAuthStatus(data.credentials_exist, data.authenticated);
+                
+                if (data.authenticated) {
+                    showSection('config-section');
+                    loadConfigToUI();
+                } else {
+                    showSection('auth-section');
+                    if (!data.credentials_exist) {
+                        document.getElementById('no-credentials').classList.remove('hidden');
+                        document.getElementById('auth-btn').disabled = true;
+                        document.getElementById('auth-btn').classList.add('opacity-50', 'cursor-not-allowed');
+                    }
+                }
+                
+                // Check if upload is in progress
+                if (data.upload_state.is_running) {
+                    showSection('upload-progress');
+                    updateProgress(data.upload_state);
+                }
+            } catch (e) {
+                console.error('Failed to load status:', e);
+            }
+        }
+
+        function updateAuthStatus(credsExist, authenticated) {
+            const statusEl = document.getElementById('auth-status');
+            if (authenticated) {
+                statusEl.innerHTML = `
+                    <span class="flex items-center gap-2 bg-green-500/20 px-3 py-1 rounded-full">
+                        <span class="w-2 h-2 bg-green-400 rounded-full"></span>
+                        Connected
+                    </span>
+                    <button onclick="logout()" class="text-sm hover:underline">Disconnect</button>
+                `;
+            } else {
+                statusEl.innerHTML = `
+                    <span class="flex items-center gap-2 bg-red-500/20 px-3 py-1 rounded-full">
+                        <span class="w-2 h-2 bg-red-400 rounded-full"></span>
+                        Not Connected
+                    </span>
+                `;
+            }
+        }
+
+        function loadConfigToUI() {
+            document.getElementById('source-path').value = config.source_path || '/workspace';
+            document.getElementById('drive-folder').value = config.drive_folder_name || 'RunPod_Backup';
+            document.getElementById('include-hidden').checked = config.include_hidden || false;
+            document.getElementById('max-size').value = config.max_file_size_mb || 0;
+            
+            exclusions = config.exclusions || [];
+            renderExclusions();
+            
+            if (config.preset) {
+                highlightPreset(config.preset);
+                if (presets[config.preset]) {
+                    document.getElementById('preset-description').textContent = presets[config.preset].description;
+                }
+            }
+        }
+
+        function showSection(sectionId) {
+            // Don't hide config section when showing other sections after auth
+            const sections = ['auth-section', 'config-section', 'scan-results', 'upload-progress', 'upload-complete'];
+            sections.forEach(id => {
+                const el = document.getElementById(id);
+                if (id === sectionId) {
+                    el.classList.remove('hidden');
+                } else if (sectionId === 'config-section' || 
+                          (sectionId === 'scan-results' && id === 'config-section') ||
+                          (sectionId === 'upload-progress' && (id === 'config-section' || id === 'scan-results'))) {
+                    // Keep config visible
+                } else if (id !== 'config-section' || sectionId === 'auth-section') {
+                    el.classList.add('hidden');
+                }
+            });
+        }
+
+        async function startAuth() {
+            try {
+                const resp = await fetch('/api/auth/start');
+                const data = await resp.json();
+                if (data.auth_url) {
+                    window.location.href = data.auth_url;
+                } else if (data.error) {
+                    showToast(data.error, 'error');
+                }
+            } catch (e) {
+                showToast('Failed to start authentication', 'error');
+            }
+        }
+
+        async function logout() {
+            try {
+                await fetch('/api/auth/logout', { method: 'POST' });
+                location.reload();
+            } catch (e) {
+                showToast('Failed to logout', 'error');
+            }
+        }
+
+        function applyPreset(presetName) {
+            if (!presets[presetName]) return;
+            
+            const preset = presets[presetName];
+            exclusions = [...preset.exclusions];
+            document.getElementById('include-hidden').checked = preset.include_hidden;
+            
+            renderExclusions();
+            highlightPreset(presetName);
+            document.getElementById('preset-description').textContent = preset.description;
+        }
+
+        function highlightPreset(presetName) {
+            document.querySelectorAll('.preset-btn').forEach(btn => {
+                if (btn.dataset.preset === presetName) {
+                    btn.classList.add('border-indigo-500', 'bg-indigo-50', 'text-indigo-700');
+                } else {
+                    btn.classList.remove('border-indigo-500', 'bg-indigo-50', 'text-indigo-700');
+                }
+            });
+        }
+
+        function renderExclusions() {
+            const container = document.getElementById('exclusions-list');
+            container.innerHTML = exclusions.map((exc, i) => `
+                <span class="tag">
+                    ${escapeHtml(exc)}
+                    <button onclick="removeExclusion(${i})" title="Remove">×</button>
+                </span>
+            `).join('');
+        }
+
+        function addExclusion() {
+            const input = document.getElementById('new-exclusion');
+            const value = input.value.trim();
+            if (value && !exclusions.includes(value)) {
+                exclusions.push(value);
+                renderExclusions();
+                input.value = '';
+            }
+        }
+
+        function removeExclusion(index) {
+            exclusions.splice(index, 1);
+            renderExclusions();
+        }
+
+        async function saveConfig() {
+            const newConfig = {
+                source_path: document.getElementById('source-path').value,
+                drive_folder_name: document.getElementById('drive-folder').value,
+                exclusions: exclusions,
+                include_hidden: document.getElementById('include-hidden').checked,
+                max_file_size_mb: parseInt(document.getElementById('max-size').value) || 0,
+                preset: document.querySelector('.preset-btn.border-indigo-500')?.dataset.preset || 'default'
+            };
+            
+            try {
+                const resp = await fetch('/api/config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(newConfig)
+                });
+                const data = await resp.json();
+                if (data.success) {
+                    config = data.config;
+                    showToast('Settings saved!', 'success');
+                }
+            } catch (e) {
+                showToast('Failed to save settings', 'error');
+            }
+        }
+
+        async function scanFiles() {
+            const scanConfig = {
+                source_path: document.getElementById('source-path').value,
+                exclusions: exclusions,
+                include_hidden: document.getElementById('include-hidden').checked,
+                max_file_size_mb: parseInt(document.getElementById('max-size').value) || 0
+            };
+            
+            try {
+                showToast('Scanning files...', 'info');
+                const resp = await fetch('/api/scan', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(scanConfig)
+                });
+                const data = await resp.json();
+                
+                if (data.error) {
+                    showToast(data.error, 'error');
+                    return;
+                }
+                
+                document.getElementById('scan-files').textContent = data.total_files.toLocaleString();
+                document.getElementById('scan-size').textContent = formatBytes(data.total_size);
+                document.getElementById('scan-types').textContent = Object.keys(data.extensions).length;
+                
+                // Estimate time (rough: 1MB/s)
+                const estSeconds = data.total_size / (1024 * 1024);
+                document.getElementById('scan-time').textContent = formatDuration(estSeconds);
+                
+                document.getElementById('sample-files').innerHTML = data.sample_files
+                    .map(f => `<div class="py-1 border-b border-gray-200 last:border-0">${escapeHtml(f)}</div>`)
+                    .join('');
+                
+                showSection('scan-results');
+            } catch (e) {
+                showToast('Scan failed: ' + e.message, 'error');
+            }
+        }
+
+        async function startUpload() {
+            await saveConfig();
+            
+            try {
+                const resp = await fetch('/api/upload/start', { method: 'POST' });
+                const data = await resp.json();
+                
+                if (data.error) {
+                    showToast(data.error, 'error');
+                    return;
+                }
+                
+                document.getElementById('scan-results').classList.add('hidden');
+                showSection('upload-progress');
+            } catch (e) {
+                showToast('Failed to start upload', 'error');
+            }
+        }
+
+        async function pauseUpload() {
+            const btn = document.getElementById('pause-btn');
+            const isPaused = btn.textContent.includes('Resume');
+            
+            try {
+                await fetch(isPaused ? '/api/upload/resume' : '/api/upload/pause', { method: 'POST' });
+                
+                if (isPaused) {
+                    btn.innerHTML = `<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                    </svg> Pause`;
+                    document.getElementById('upload-status-icon').classList.remove('bg-amber-500');
+                    document.getElementById('upload-status-icon').classList.add('bg-green-500');
+                    document.getElementById('upload-status-text').textContent = 'Uploading...';
+                } else {
+                    btn.innerHTML = `<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/>
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                    </svg> Resume`;
+                    document.getElementById('upload-status-icon').classList.remove('bg-green-500');
+                    document.getElementById('upload-status-icon').classList.add('bg-amber-500');
+                    document.getElementById('upload-status-text').textContent = 'Paused';
+                }
+            } catch (e) {
+                showToast('Failed to pause/resume', 'error');
+            }
+        }
+
+        async function cancelUpload() {
+            if (!confirm('Are you sure you want to cancel the upload?')) return;
+            
+            try {
+                await fetch('/api/upload/cancel', { method: 'POST' });
+                document.getElementById('upload-status-text').textContent = 'Cancelling...';
+            } catch (e) {
+                showToast('Failed to cancel', 'error');
+            }
+        }
+
+        function updateProgress(data) {
+            const percent = data.total_bytes > 0 ? (data.uploaded_bytes / data.total_bytes * 100) : 0;
+            
+            document.getElementById('progress-bar').style.width = percent.toFixed(1) + '%';
+            document.getElementById('progress-percent').textContent = percent.toFixed(1) + '%';
+            document.getElementById('progress-files').textContent = `${data.processed_files} / ${data.total_files} files`;
+            document.getElementById('progress-bytes').textContent = `${formatBytes(data.uploaded_bytes)} / ${formatBytes(data.total_bytes)}`;
+            document.getElementById('current-file').textContent = data.current_file || '--';
+            
+            if (uploadStartTime) {
+                const elapsed = (Date.now() - uploadStartTime) / 1000;
+                document.getElementById('elapsed-time').textContent = formatDuration(elapsed);
+                
+                if (data.uploaded_bytes > 0) {
+                    const speed = data.uploaded_bytes / elapsed;
+                    document.getElementById('progress-speed').textContent = formatBytes(speed) + '/s';
+                    
+                    const remaining = (data.total_bytes - data.uploaded_bytes) / speed;
+                    document.getElementById('remaining-time').textContent = formatDuration(remaining);
+                }
+            }
+        }
+
+        function addError(message) {
+            const errorLog = document.getElementById('error-log');
+            const errorList = document.getElementById('error-list');
+            
+            errorLog.classList.remove('hidden');
+            errorList.innerHTML += `<div class="py-1 border-b border-red-200 last:border-0">${escapeHtml(message)}</div>`;
+        }
+
+        function showComplete(data) {
+            document.getElementById('upload-progress').classList.add('hidden');
+            document.getElementById('upload-complete').classList.remove('hidden');
+            
+            document.getElementById('complete-files').textContent = data.processed_files;
+            document.getElementById('complete-size').textContent = formatBytes(data.uploaded_bytes);
+            document.getElementById('complete-time').textContent = formatDuration(data.elapsed_seconds);
+            
+            if (data.cancelled) {
+                document.getElementById('complete-summary').textContent = 'Upload was cancelled.';
+            } else if (data.errors && data.errors.length > 0) {
+                document.getElementById('complete-summary').textContent = `Completed with ${data.errors.length} error(s).`;
+                document.getElementById('complete-errors').classList.remove('hidden');
+                document.getElementById('complete-error-list').innerHTML = data.errors
+                    .map(e => `<div class="py-1">${escapeHtml(e)}</div>`).join('');
+            } else {
+                document.getElementById('complete-summary').textContent = 'All files uploaded successfully!';
+            }
+        }
+
+        function resetUpload() {
+            document.getElementById('upload-complete').classList.add('hidden');
+            document.getElementById('scan-results').classList.add('hidden');
+            document.getElementById('error-log').classList.add('hidden');
+            document.getElementById('error-list').innerHTML = '';
+            document.getElementById('complete-errors').classList.add('hidden');
+            uploadStartTime = null;
+            loadStatus();
+        }
+
+        // Browser modal
+        function openBrowser() {
+            currentBrowserPath = document.getElementById('source-path').value || '/workspace';
+            loadBrowserPath(currentBrowserPath);
+            document.getElementById('browser-modal').classList.remove('hidden');
+            document.getElementById('browser-modal').classList.add('flex');
+        }
+
+        function closeBrowser() {
+            document.getElementById('browser-modal').classList.add('hidden');
+            document.getElementById('browser-modal').classList.remove('flex');
+        }
+
+        async function loadBrowserPath(path) {
+            try {
+                const resp = await fetch(`/api/browse?path=${encodeURIComponent(path)}`);
+                const data = await resp.json();
+                
+                if (data.error) {
+                    showToast(data.error, 'error');
+                    return;
+                }
+                
+                currentBrowserPath = data.current;
+                document.getElementById('browser-path').textContent = data.current;
+                
+                let html = '';
+                if (data.parent) {
+                    html += `<div onclick="loadBrowserPath('${escapeHtml(data.parent)}')" class="px-4 py-2 hover:bg-gray-50 cursor-pointer flex items-center gap-2 border-b">
+                        <svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 17l-5-5m0 0l5-5m-5 5h12"/>
+                        </svg>
+                        <span class="text-gray-600">..</span>
+                    </div>`;
+                }
+                
+                data.items.filter(i => i.is_dir).forEach(item => {
+                    html += `<div onclick="loadBrowserPath('${escapeHtml(item.path)}')" class="px-4 py-2 hover:bg-gray-50 cursor-pointer flex items-center gap-2 border-b">
+                        <svg class="w-5 h-5 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
+                        </svg>
+                        <span>${escapeHtml(item.name)}</span>
+                    </div>`;
+                });
+                
+                document.getElementById('browser-list').innerHTML = html || '<div class="p-4 text-gray-500 text-center">No subdirectories</div>';
+            } catch (e) {
+                showToast('Failed to browse: ' + e.message, 'error');
+            }
+        }
+
+        function selectCurrentPath() {
+            document.getElementById('source-path').value = currentBrowserPath;
+            closeBrowser();
+        }
+
+        // Utilities
+        function formatBytes(bytes) {
+            if (bytes === 0) return '0 B';
+            const k = 1024;
+            const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
+
+        function formatDuration(seconds) {
+            if (!seconds || seconds < 0) return '--:--:--';
+            const h = Math.floor(seconds / 3600);
+            const m = Math.floor((seconds % 3600) / 60);
+            const s = Math.floor(seconds % 60);
+            return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function showToast(message, type = 'info') {
+            const toast = document.createElement('div');
+            const colors = {
+                success: 'bg-green-500',
+                error: 'bg-red-500',
+                info: 'bg-blue-500'
+            };
+            toast.className = `fixed bottom-4 right-4 ${colors[type]} text-white px-6 py-3 rounded-lg shadow-lg z-50 fade-in`;
+            toast.textContent = message;
+            document.body.appendChild(toast);
+            setTimeout(() => toast.remove(), 3000);
+        }
+    </script>
+</body>
+</html>
