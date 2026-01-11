@@ -390,9 +390,147 @@
                 </button>
             </div>
         </section>
+
+        <!-- Restore Section -->
+        <section id="restore-section" class="mb-8 hidden">
+            <div class="bg-white rounded-2xl p-6 card-shadow fade-in">
+                <h2 class="text-xl font-semibold text-gray-800 mb-6 flex items-center gap-2">
+                    <svg class="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10"/>
+                    </svg>
+                    Restore from Google Drive
+                </h2>
+
+                <!-- Drive Folder Selection -->
+                <div class="mb-6">
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Select Backup Folder from Drive</label>
+                    <div class="flex gap-2">
+                        <input type="text" id="restore-folder-name" readonly placeholder="Click Browse to select..." 
+                            class="flex-1 px-4 py-2 border border-gray-300 rounded-lg bg-gray-50">
+                        <button onclick="openDriveBrowser()" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors">
+                            Browse Drive
+                        </button>
+                    </div>
+                    <input type="hidden" id="restore-folder-id">
+                </div>
+
+                <!-- Destination Path -->
+                <div class="mb-6">
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Restore Destination</label>
+                    <div class="flex gap-2">
+                        <input type="text" id="restore-dest-path" value="/workspace" 
+                            class="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                        <button onclick="openBrowserForRestore()" class="px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors">
+                            <svg class="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
+                            </svg>
+                        </button>
+                    </div>
+                    <p class="mt-1 text-sm text-gray-500">Files will be restored to: <span id="restore-full-path" class="font-mono">/workspace/[folder_name]</span></p>
+                </div>
+
+                <button onclick="startRestore()" id="start-restore-btn" disabled class="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white font-medium py-3 px-6 rounded-xl transition-colors flex items-center justify-center gap-2">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10"/>
+                    </svg>
+                    Start Restore
+                </button>
+            </div>
+        </section>
+
+        <!-- Restore Progress Section -->
+        <section id="restore-progress" class="mb-8 hidden">
+            <div class="bg-white rounded-2xl p-6 card-shadow fade-in">
+                <div class="flex items-center justify-between mb-4">
+                    <h2 class="text-xl font-semibold text-gray-800 flex items-center gap-2">
+                        <div id="restore-status-icon" class="w-3 h-3 rounded-full bg-blue-500 pulse-dot"></div>
+                        <span id="restore-status-text">Restoring...</span>
+                    </h2>
+                    <div class="flex gap-2">
+                        <button id="restore-pause-btn" onclick="pauseRestore()" class="px-4 py-2 bg-amber-100 hover:bg-amber-200 text-amber-700 rounded-lg transition-colors flex items-center gap-2">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                            </svg>
+                            Pause
+                        </button>
+                        <button onclick="cancelRestore()" class="px-4 py-2 bg-red-100 hover:bg-red-200 text-red-700 rounded-lg transition-colors flex items-center gap-2">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                            </svg>
+                            Cancel
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Progress Bar -->
+                <div class="mb-6">
+                    <div class="flex justify-between text-sm text-gray-600 mb-2">
+                        <span id="restore-progress-files">0 / 0 files</span>
+                        <span id="restore-progress-percent">0%</span>
+                    </div>
+                    <div class="w-full bg-gray-200 rounded-full h-4 overflow-hidden">
+                        <div id="restore-progress-bar" class="progress-bar h-full bg-gradient-to-r from-blue-500 to-cyan-500 rounded-full" style="width: 0%"></div>
+                    </div>
+                    <div class="flex justify-between text-sm text-gray-500 mt-2">
+                        <span id="restore-progress-bytes">0 MB / 0 MB</span>
+                        <span id="restore-progress-speed">-- MB/s</span>
+                    </div>
+                </div>
+
+                <!-- Current File -->
+                <div class="bg-gray-50 rounded-lg p-4 mb-4">
+                    <div class="text-sm text-gray-500 mb-1">Currently downloading:</div>
+                    <div id="restore-current-file" class="font-mono text-gray-800 truncate">--</div>
+                </div>
+
+                <!-- Time Stats -->
+                <div class="grid grid-cols-2 gap-4">
+                    <div class="bg-gray-50 rounded-lg p-3 text-center">
+                        <div class="text-sm text-gray-500">Elapsed</div>
+                        <div id="restore-elapsed-time" class="text-lg font-semibold text-gray-800">--:--:--</div>
+                    </div>
+                    <div class="bg-gray-50 rounded-lg p-3 text-center">
+                        <div class="text-sm text-gray-500">Remaining</div>
+                        <div id="restore-remaining-time" class="text-lg font-semibold text-gray-800">--:--:--</div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Restore Complete Section -->
+        <section id="restore-complete" class="mb-8 hidden">
+            <div class="bg-white rounded-2xl p-6 card-shadow fade-in text-center">
+                <div class="w-20 h-20 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <svg class="w-10 h-10 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+                    </svg>
+                </div>
+                <h2 class="text-2xl font-bold text-gray-800 mb-2">Restore Complete!</h2>
+                <p id="restore-complete-summary" class="text-gray-600 mb-6"></p>
+                
+                <div class="grid grid-cols-3 gap-4 mb-6">
+                    <div class="bg-gray-50 rounded-xl p-4">
+                        <div id="restore-complete-files" class="text-2xl font-bold text-blue-600">0</div>
+                        <div class="text-sm text-gray-600">Files Restored</div>
+                    </div>
+                    <div class="bg-gray-50 rounded-xl p-4">
+                        <div id="restore-complete-size" class="text-2xl font-bold text-cyan-600">0 MB</div>
+                        <div class="text-sm text-gray-600">Total Size</div>
+                    </div>
+                    <div class="bg-gray-50 rounded-xl p-4">
+                        <div id="restore-complete-time" class="text-2xl font-bold text-indigo-600">00:00</div>
+                        <div class="text-sm text-gray-600">Duration</div>
+                    </div>
+                </div>
+
+                <button onclick="resetRestore()" class="bg-blue-600 hover:bg-blue-700 text-white font-medium py-3 px-8 rounded-xl transition-colors">
+                    Done
+                </button>
+            </div>
+        </section>
     </main>
 
-    <!-- Folder Browser Modal -->
+    <!-- Folder Browser Modal (Local) -->
     <div id="browser-modal" class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center z-50">
         <div class="bg-white rounded-2xl p-6 w-full max-w-lg mx-4 max-h-[80vh] flex flex-col">
             <div class="flex items-center justify-between mb-4">
@@ -413,6 +551,35 @@
         </div>
     </div>
 
+    <!-- Drive Browser Modal -->
+    <div id="drive-browser-modal" class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center z-50">
+        <div class="bg-white rounded-2xl p-6 w-full max-w-lg mx-4 max-h-[80vh] flex flex-col">
+            <div class="flex items-center justify-between mb-4">
+                <h3 class="text-lg font-semibold flex items-center gap-2">
+                    <svg class="w-5 h-5 text-blue-600" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M7.71 3.5L1.15 15l4.58 6h11.84l4.58-6L15.71 3.5H7.71zM9.88 5.5h4.24l4.58 7.5H5.3l4.58-7.5zM6.73 15l2.42 4h5.7l2.42-4H6.73z"/>
+                    </svg>
+                    Select Google Drive Folder
+                </h3>
+                <button onclick="closeDriveBrowser()" class="text-gray-500 hover:text-gray-700">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                    </svg>
+                </button>
+            </div>
+            <div id="drive-browser-path" class="text-sm text-gray-500 mb-3 font-mono bg-blue-50 p-2 rounded flex items-center gap-2">
+                <span id="drive-path-text">My Drive</span>
+            </div>
+            <div id="drive-browser-list" class="flex-1 overflow-y-auto border rounded-lg min-h-[200px]">
+                <div class="p-4 text-gray-500 text-center">Loading...</div>
+            </div>
+            <div class="flex gap-3 mt-4">
+                <button onclick="closeDriveBrowser()" class="flex-1 py-2 border border-gray-300 rounded-lg hover:bg-gray-50">Cancel</button>
+                <button id="select-drive-folder-btn" onclick="selectDriveFolder()" disabled class="flex-1 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed">Select</button>
+            </div>
+        </div>
+    </div>
+
     <script>
         // Global state
         let config = {};
@@ -421,6 +588,10 @@
         let currentBrowserPath = '/workspace';
         let socket = null;
         let uploadStartTime = null;
+        let restoreStartTime = null;
+        let browserMode = 'upload'; // 'upload' or 'restore'
+        let driveFolderStack = []; // Navigation history for Drive browser
+        let selectedDriveFolder = null;
 
         // Initialize
         document.addEventListener('DOMContentLoaded', () => {
@@ -442,7 +613,7 @@
             socket = io();
             
             socket.on('upload_started', (data) => {
-                uploadStartTime = Date.now();
+                if (!uploadStartTime) uploadStartTime = Date.now();
                 showSection('upload-progress');
             });
             
@@ -461,6 +632,29 @@
             socket.on('upload_status', (data) => {
                 document.getElementById('upload-status-text').textContent = data.message;
             });
+            
+            // Restore events
+            socket.on('restore_started', (data) => {
+                if (!restoreStartTime) restoreStartTime = Date.now();
+                document.getElementById('restore-section').classList.add('hidden');
+                document.getElementById('restore-progress').classList.remove('hidden');
+            });
+            
+            socket.on('restore_progress', (data) => {
+                updateRestoreProgress(data);
+            });
+            
+            socket.on('restore_error', (data) => {
+                showToast(data.message, 'error');
+            });
+            
+            socket.on('restore_complete', (data) => {
+                showRestoreComplete(data);
+            });
+            
+            socket.on('restore_status', (data) => {
+                document.getElementById('restore-status-text').textContent = data.message;
+            });
         }
 
         async function loadStatus() {
@@ -475,9 +669,11 @@
                 
                 if (data.authenticated) {
                     showSection('config-section');
+                    document.getElementById('restore-section').classList.remove('hidden');
                     loadConfigToUI();
                 } else {
                     showSection('auth-section');
+                    document.getElementById('restore-section').classList.add('hidden');
                     if (!data.credentials_exist) {
                         document.getElementById('no-credentials').classList.remove('hidden');
                         document.getElementById('auth-btn').disabled = true;
@@ -489,6 +685,15 @@
                 if (data.upload_state.is_running) {
                     showSection('upload-progress');
                     updateProgress(data.upload_state);
+                }
+                
+                // Check if restore is in progress
+                if (data.restore_state && data.restore_state.is_running) {
+                    // Convert Python timestamp (seconds) to JS timestamp (milliseconds)
+                    restoreStartTime = data.restore_state.start_time ? data.restore_state.start_time * 1000 : Date.now();
+                    document.getElementById('restore-section').classList.add('hidden');
+                    document.getElementById('restore-progress').classList.remove('hidden');
+                    updateRestoreProgress(data.restore_state);
                 }
             } catch (e) {
                 console.error('Failed to load status:', e);
@@ -756,12 +961,17 @@
                 const elapsed = (Date.now() - uploadStartTime) / 1000;
                 document.getElementById('elapsed-time').textContent = formatDuration(elapsed);
                 
-                if (data.uploaded_bytes > 0) {
-                    const speed = data.uploaded_bytes / elapsed;
-                    document.getElementById('progress-speed').textContent = formatBytes(speed) + '/s';
+                if (data.processed_files > 0 && elapsed > 0) {
+                    const filesPerSec = data.processed_files / elapsed;
+                    const remainingFiles = data.total_files - data.processed_files;
+                    const remainingSec = remainingFiles / filesPerSec;
+                    document.getElementById('remaining-time').textContent = formatDuration(remainingSec);
                     
-                    const remaining = (data.total_bytes - data.uploaded_bytes) / speed;
-                    document.getElementById('remaining-time').textContent = formatDuration(remaining);
+                    // Show speed in MB/s based on uploaded bytes
+                    if (data.uploaded_bytes > 0) {
+                        const speed = data.uploaded_bytes / elapsed;
+                        document.getElementById('progress-speed').textContent = formatBytes(speed) + '/s';
+                    }
                 }
             }
         }
@@ -806,6 +1016,7 @@
 
         // Browser modal
         function openBrowser() {
+            browserMode = 'upload';
             currentBrowserPath = document.getElementById('source-path').value || '/workspace';
             loadBrowserPath(currentBrowserPath);
             document.getElementById('browser-modal').classList.remove('hidden');
@@ -856,8 +1067,268 @@
         }
 
         function selectCurrentPath() {
-            document.getElementById('source-path').value = currentBrowserPath;
+            if (browserMode === 'restore') {
+                document.getElementById('restore-dest-path').value = currentBrowserPath;
+                updateRestoreFullPath();
+            } else {
+                document.getElementById('source-path').value = currentBrowserPath;
+            }
             closeBrowser();
+        }
+
+        function openBrowserForRestore() {
+            browserMode = 'restore';
+            currentBrowserPath = document.getElementById('restore-dest-path').value || '/workspace';
+            loadBrowserPath(currentBrowserPath);
+            document.getElementById('browser-modal').classList.remove('hidden');
+            document.getElementById('browser-modal').classList.add('flex');
+        }
+
+        // Drive Browser functions
+        function openDriveBrowser() {
+            driveFolderStack = [];
+            selectedDriveFolder = null;
+            document.getElementById('select-drive-folder-btn').disabled = true;
+            document.getElementById('drive-browser-modal').classList.remove('hidden');
+            document.getElementById('drive-browser-modal').classList.add('flex');
+            loadDriveFolders(null);
+        }
+
+        function closeDriveBrowser() {
+            document.getElementById('drive-browser-modal').classList.add('hidden');
+            document.getElementById('drive-browser-modal').classList.remove('flex');
+        }
+
+        async function loadDriveFolders(parentId) {
+            const listEl = document.getElementById('drive-browser-list');
+            listEl.innerHTML = '<div class="p-4 text-gray-500 text-center">Loading...</div>';
+            
+            try {
+                const url = parentId 
+                    ? `/api/drive/folders?parent_id=${encodeURIComponent(parentId)}`
+                    : '/api/drive/folders';
+                const resp = await fetch(url);
+                const data = await resp.json();
+                
+                if (data.error) {
+                    listEl.innerHTML = `<div class="p-4 text-red-500 text-center">${escapeHtml(data.error)}</div>`;
+                    return;
+                }
+                
+                let html = '';
+                
+                // Back button if not at root
+                if (driveFolderStack.length > 0) {
+                    html += `<div onclick="navigateDriveBack()" class="px-4 py-2 hover:bg-gray-50 cursor-pointer flex items-center gap-2 border-b">
+                        <svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 17l-5-5m0 0l5-5m-5 5h12"/>
+                        </svg>
+                        <span class="text-gray-600">..</span>
+                    </div>`;
+                }
+                
+                data.folders.forEach(folder => {
+                    html += `<div class="px-4 py-2 hover:bg-blue-50 cursor-pointer flex items-center gap-2 border-b group" 
+                                onclick="selectDriveFolderItem('${escapeHtml(folder.id)}', '${escapeHtml(folder.name)}')"
+                                ondblclick="navigateDriveInto('${escapeHtml(folder.id)}', '${escapeHtml(folder.name)}')">
+                        <svg class="w-5 h-5 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
+                        </svg>
+                        <span class="flex-1">${escapeHtml(folder.name)}</span>
+                        <span class="text-xs text-gray-400 opacity-0 group-hover:opacity-100">double-click to open</span>
+                    </div>`;
+                });
+                
+                listEl.innerHTML = html || '<div class="p-4 text-gray-500 text-center">No folders found</div>';
+                
+                // Update path display
+                const pathText = driveFolderStack.length > 0 
+                    ? 'My Drive / ' + driveFolderStack.map(f => f.name).join(' / ')
+                    : 'My Drive';
+                document.getElementById('drive-path-text').textContent = pathText;
+                
+            } catch (e) {
+                listEl.innerHTML = `<div class="p-4 text-red-500 text-center">Failed to load: ${e.message}</div>`;
+            }
+        }
+
+        function selectDriveFolderItem(id, name) {
+            selectedDriveFolder = { id, name };
+            document.getElementById('select-drive-folder-btn').disabled = false;
+            
+            // Highlight selected
+            document.querySelectorAll('#drive-browser-list > div').forEach(el => {
+                el.classList.remove('bg-blue-100');
+            });
+            event.currentTarget.classList.add('bg-blue-100');
+        }
+
+        function navigateDriveInto(id, name) {
+            driveFolderStack.push({ id, name });
+            selectedDriveFolder = null;
+            document.getElementById('select-drive-folder-btn').disabled = true;
+            loadDriveFolders(id);
+        }
+
+        function navigateDriveBack() {
+            driveFolderStack.pop();
+            selectedDriveFolder = null;
+            document.getElementById('select-drive-folder-btn').disabled = true;
+            const parentId = driveFolderStack.length > 0 ? driveFolderStack[driveFolderStack.length - 1].id : null;
+            loadDriveFolders(parentId);
+        }
+
+        function selectDriveFolder() {
+            if (!selectedDriveFolder) return;
+            
+            document.getElementById('restore-folder-id').value = selectedDriveFolder.id;
+            document.getElementById('restore-folder-name').value = selectedDriveFolder.name;
+            document.getElementById('start-restore-btn').disabled = false;
+            updateRestoreFullPath();
+            closeDriveBrowser();
+        }
+
+        function updateRestoreFullPath() {
+            const destPath = document.getElementById('restore-dest-path').value || '/workspace';
+            const folderName = document.getElementById('restore-folder-name').value || '[folder_name]';
+            document.getElementById('restore-full-path').textContent = `${destPath}/${folderName}`;
+        }
+
+        // Restore functions
+        async function startRestore() {
+            const folderId = document.getElementById('restore-folder-id').value;
+            const folderName = document.getElementById('restore-folder-name').value;
+            const destPath = document.getElementById('restore-dest-path').value;
+            
+            if (!folderId) {
+                showToast('Please select a folder from Google Drive', 'error');
+                return;
+            }
+            
+            try {
+                const resp = await fetch('/api/restore/start', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        folder_id: folderId,
+                        folder_name: folderName,
+                        dest_path: destPath
+                    })
+                });
+                const data = await resp.json();
+                
+                if (data.error) {
+                    showToast(data.error, 'error');
+                    return;
+                }
+                
+                restoreStartTime = Date.now();
+            } catch (e) {
+                showToast('Failed to start restore: ' + e.message, 'error');
+            }
+        }
+
+        async function pauseRestore() {
+            const btn = document.getElementById('restore-pause-btn');
+            const isPaused = btn.textContent.includes('Resume');
+            
+            try {
+                await fetch(isPaused ? '/api/restore/resume' : '/api/restore/pause', { method: 'POST' });
+                
+                if (isPaused) {
+                    btn.innerHTML = `<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                    </svg> Pause`;
+                    document.getElementById('restore-status-icon').classList.remove('bg-amber-500');
+                    document.getElementById('restore-status-icon').classList.add('bg-blue-500');
+                    document.getElementById('restore-status-text').textContent = 'Restoring...';
+                } else {
+                    btn.innerHTML = `<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/>
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                    </svg> Resume`;
+                    document.getElementById('restore-status-icon').classList.remove('bg-blue-500');
+                    document.getElementById('restore-status-icon').classList.add('bg-amber-500');
+                    document.getElementById('restore-status-text').textContent = 'Paused';
+                }
+            } catch (e) {
+                showToast('Failed to pause/resume', 'error');
+            }
+        }
+
+        async function cancelRestore() {
+            if (!confirm('Are you sure you want to cancel the restore?')) return;
+            
+            try {
+                await fetch('/api/restore/cancel', { method: 'POST' });
+                document.getElementById('restore-status-text').textContent = 'Cancelling...';
+            } catch (e) {
+                showToast('Failed to cancel', 'error');
+            }
+        }
+
+        function updateRestoreProgress(data) {
+            const percent = data.total_files > 0 ? (data.processed_files / data.total_files * 100) : 0;
+            
+            document.getElementById('restore-progress-bar').style.width = percent.toFixed(1) + '%';
+            document.getElementById('restore-progress-percent').textContent = percent.toFixed(1) + '%';
+            document.getElementById('restore-progress-files').textContent = `${data.processed_files} / ${data.total_files} files`;
+            document.getElementById('restore-progress-bytes').textContent = `${formatBytes(data.downloaded_bytes)} / ${formatBytes(data.total_bytes)}`;
+            document.getElementById('restore-current-file').textContent = data.current_file || '--';
+            
+            if (restoreStartTime) {
+                const elapsed = (Date.now() - restoreStartTime) / 1000;
+                document.getElementById('restore-elapsed-time').textContent = formatDuration(elapsed);
+                
+                if (data.processed_files > 0 && elapsed > 0) {
+                    const filesPerSec = data.processed_files / elapsed;
+                    const remainingFiles = data.total_files - data.processed_files;
+                    const remainingSec = remainingFiles / filesPerSec;
+                    document.getElementById('restore-remaining-time').textContent = formatDuration(remainingSec);
+                    
+                    if (data.downloaded_bytes > 0) {
+                        const speed = data.downloaded_bytes / elapsed;
+                        document.getElementById('restore-progress-speed').textContent = formatBytes(speed) + '/s';
+                    }
+                }
+            }
+        }
+
+        function showRestoreComplete(data) {
+            document.getElementById('restore-progress').classList.add('hidden');
+            document.getElementById('restore-complete').classList.remove('hidden');
+            
+            document.getElementById('restore-complete-files').textContent = data.processed_files;
+            document.getElementById('restore-complete-size').textContent = formatBytes(data.downloaded_bytes);
+            document.getElementById('restore-complete-time').textContent = formatDuration(data.elapsed_seconds);
+            
+            if (data.cancelled) {
+                document.getElementById('restore-complete-summary').textContent = 'Restore was cancelled.';
+            } else if (data.errors && data.errors.length > 0) {
+                document.getElementById('restore-complete-summary').textContent = `Completed with ${data.errors.length} error(s). Files restored to: ${data.dest_path}`;
+            } else {
+                document.getElementById('restore-complete-summary').textContent = `All files restored successfully to: ${data.dest_path}`;
+            }
+        }
+
+        function resetRestore() {
+            document.getElementById('restore-complete').classList.add('hidden');
+            document.getElementById('restore-progress').classList.add('hidden');
+            document.getElementById('restore-section').classList.remove('hidden');
+            document.getElementById('restore-folder-id').value = '';
+            document.getElementById('restore-folder-name').value = '';
+            document.getElementById('start-restore-btn').disabled = true;
+            restoreStartTime = null;
+            // Reset progress indicators
+            document.getElementById('restore-progress-bar').style.width = '0%';
+            document.getElementById('restore-progress-percent').textContent = '0%';
+            document.getElementById('restore-progress-files').textContent = '0 / 0 files';
+            document.getElementById('restore-progress-bytes').textContent = '0 B / 0 B';
+            document.getElementById('restore-current-file').textContent = '--';
+            document.getElementById('restore-elapsed-time').textContent = '--:--:--';
+            document.getElementById('restore-remaining-time').textContent = '--:--:--';
+            document.getElementById('restore-progress-speed').textContent = '-- MB/s';
+            updateRestoreFullPath();
         }
 
         // Utilities

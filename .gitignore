@@ -1,0 +1,26 @@
+# Credentials and tokens
+credentials.json
+token.json
+config.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+.venv/
+env/
+.env
+
+# Logs
+*.log
+server.log
+
+# IDE
+.vscode/
+.idea/
+
+# Agent reference file
+agent.md

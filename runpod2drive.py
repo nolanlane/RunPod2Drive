@@ -28,8 +28,9 @@ from flask_socketio import SocketIO, emit
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
-from googleapiclient.http import MediaFileUpload
+from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
 from googleapiclient.errors import HttpError
+import io
 
 # Initialize Flask app
 app = Flask(__name__, template_folder='templates', static_folder='static')
@@ -79,6 +80,22 @@ upload_state = {
 }
 
 upload_lock = threading.Lock()
+
+# Restore state
+restore_state = {
+    'is_running': False,
+    'is_paused': False,
+    'current_file': '',
+    'total_files': 0,
+    'processed_files': 0,
+    'total_bytes': 0,
+    'downloaded_bytes': 0,
+    'errors': [],
+    'start_time': None,
+    'cancel_requested': False
+}
+
+restore_lock = threading.Lock()
 
 
 @dataclass
@@ -464,6 +481,232 @@ def run_upload(config: UploadConfig):
         upload_state['cancel_requested'] = False
 
 
+def list_drive_folders(service, parent_id: str = None) -> List[Dict]:
+    """List folders in Google Drive with pagination"""
+    query = "mimeType='application/vnd.google-apps.folder' and trashed=false"
+    if parent_id:
+        query += f" and '{parent_id}' in parents"
+    else:
+        query += " and 'root' in parents"
+    
+    folders = []
+    page_token = None
+    
+    while True:
+        results = service.files().list(
+            q=query,
+            spaces='drive',
+            fields='nextPageToken, files(id, name, modifiedTime)',
+            orderBy='name',
+            pageSize=1000,
+            pageToken=page_token
+        ).execute()
+        
+        folders.extend(results.get('files', []))
+        page_token = results.get('nextPageToken')
+        
+        if not page_token:
+            break
+    
+    return folders
+
+
+# Google Workspace export formats
+WORKSPACE_EXPORT_FORMATS = {
+    'application/vnd.google-apps.document': ('application/pdf', '.pdf'),
+    'application/vnd.google-apps.spreadsheet': ('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', '.xlsx'),
+    'application/vnd.google-apps.presentation': ('application/pdf', '.pdf'),
+    'application/vnd.google-apps.drawing': ('image/png', '.png'),
+}
+
+
+def list_drive_files_recursive(service, folder_id: str, path: str = '') -> List[Dict]:
+    """Recursively list all files in a Drive folder with pagination"""
+    files = []
+    page_token = None
+    
+    while True:
+        # List files in current folder
+        query = f"'{folder_id}' in parents and trashed=false"
+        results = service.files().list(
+            q=query,
+            spaces='drive',
+            fields='nextPageToken, files(id, name, mimeType, size)',
+            pageSize=1000,
+            pageToken=page_token
+        ).execute()
+        
+        for item in results.get('files', []):
+            mime_type = item['mimeType']
+            item_path = os.path.join(path, item['name']) if path else item['name']
+            
+            if mime_type == 'application/vnd.google-apps.folder':
+                # Recurse into subfolder
+                files.extend(list_drive_files_recursive(service, item['id'], item_path))
+            elif mime_type in WORKSPACE_EXPORT_FORMATS:
+                # Google Workspace file - needs export
+                export_mime, ext = WORKSPACE_EXPORT_FORMATS[mime_type]
+                files.append({
+                    'id': item['id'],
+                    'name': item['name'],
+                    'path': item_path + ext,
+                    'size': 0,  # Size unknown for Workspace files
+                    'export_mime': export_mime
+                })
+            elif mime_type.startswith('application/vnd.google-apps.'):
+                # Other Google apps (forms, sites, etc.) - skip
+                continue
+            else:
+                files.append({
+                    'id': item['id'],
+                    'name': item['name'],
+                    'path': item_path,
+                    'size': int(item.get('size', 0)),
+                    'export_mime': None
+                })
+        
+        page_token = results.get('nextPageToken')
+        if not page_token:
+            break
+    
+    return files
+
+
+def download_single_file(service, file_info: Dict, dest_path: str) -> Dict:
+    """Download a single file from Google Drive"""
+    file_id = file_info['id']
+    rel_path = file_info['path']
+    file_size = file_info['size']
+    export_mime = file_info.get('export_mime')
+    
+    try:
+        # Create directory structure
+        full_path = os.path.join(dest_path, rel_path)
+        parent_dir = os.path.dirname(full_path)
+        if parent_dir:
+            os.makedirs(parent_dir, exist_ok=True)
+        
+        # Choose download method based on file type
+        if export_mime:
+            # Google Workspace file - export it
+            request = service.files().export_media(fileId=file_id, mimeType=export_mime)
+        else:
+            # Regular file - download directly
+            request = service.files().get_media(fileId=file_id)
+        
+        with open(full_path, 'wb') as f:
+            downloader = MediaIoBaseDownload(f, request)
+            done = False
+            while not done:
+                if restore_state['cancel_requested']:
+                    return {'success': False, 'file': rel_path, 'size': file_size, 'error': 'Cancelled'}
+                while restore_state['is_paused'] and not restore_state['cancel_requested']:
+                    time.sleep(0.1)
+                status, done = downloader.next_chunk()
+        
+        # Get actual file size after download
+        actual_size = os.path.getsize(full_path) if os.path.exists(full_path) else file_size
+        return {'success': True, 'file': rel_path, 'size': actual_size, 'error': None}
+    
+    except Exception as e:
+        return {'success': False, 'file': rel_path, 'size': file_size, 'error': str(e)}
+
+
+def run_restore(folder_id: str, folder_name: str, dest_path: str):
+    """Main restore function running in background thread"""
+    global restore_state
+    
+    try:
+        creds = get_credentials()
+        if not creds:
+            restore_state['errors'].append("Not authenticated with Google Drive")
+            restore_state['is_running'] = False
+            socketio.emit('restore_error', {'message': 'Not authenticated'})
+            return
+        
+        service = build('drive', 'v3', credentials=creds)
+        
+        # Get files to download
+        socketio.emit('restore_status', {'message': 'Scanning Drive folder...'})
+        files = list_drive_files_recursive(service, folder_id)
+        
+        if not files:
+            restore_state['is_running'] = False
+            socketio.emit('restore_complete', {'message': 'No files to restore'})
+            return
+        
+        restore_state['total_files'] = len(files)
+        # Only count regular files for bytes (Workspace files have size 0 until downloaded)
+        restore_state['total_bytes'] = sum(f['size'] for f in files if not f.get('export_mime'))
+        restore_state['start_time'] = time.time()
+        
+        socketio.emit('restore_started', {
+            'total_files': restore_state['total_files'],
+            'total_bytes': restore_state['total_bytes']
+        })
+        
+        # Create destination directory
+        full_dest = os.path.join(dest_path, folder_name)
+        os.makedirs(full_dest, exist_ok=True)
+        
+        socketio.emit('restore_status', {'message': f'Downloading {len(files)} files...'})
+        
+        # Progress update function
+        def emit_progress():
+            socketio.emit('restore_progress', {
+                'current_file': restore_state['current_file'],
+                'processed_files': restore_state['processed_files'],
+                'total_files': restore_state['total_files'],
+                'downloaded_bytes': restore_state['downloaded_bytes'],
+                'total_bytes': restore_state['total_bytes']
+            })
+        
+        # Download files (sequential to avoid rate limits)
+        for file_info in files:
+            if restore_state['cancel_requested']:
+                break
+            
+            while restore_state['is_paused'] and not restore_state['cancel_requested']:
+                time.sleep(0.5)
+            
+            restore_state['current_file'] = file_info['path']
+            emit_progress()
+            
+            result = download_single_file(service, file_info, full_dest)
+            
+            with restore_lock:
+                restore_state['processed_files'] += 1
+                if result['success']:
+                    # Only count bytes for regular files (not Workspace exports)
+                    if not file_info.get('export_mime'):
+                        restore_state['downloaded_bytes'] += result['size']
+                else:
+                    if result['error'] != 'Cancelled':
+                        error_msg = f"Error downloading {result['file']}: {result['error']}"
+                        restore_state['errors'].append(error_msg)
+                        socketio.emit('restore_error', {'message': error_msg, 'file': result['file']})
+            
+            emit_progress()
+        
+        # Complete
+        elapsed = time.time() - restore_state['start_time']
+        socketio.emit('restore_complete', {
+            'processed_files': restore_state['processed_files'],
+            'total_files': restore_state['total_files'],
+            'downloaded_bytes': restore_state['downloaded_bytes'],
+            'elapsed_seconds': elapsed,
+            'errors': restore_state['errors'],
+            'cancelled': restore_state['cancel_requested'],
+            'dest_path': full_dest
+        })
+        
+    except Exception as e:
+        socketio.emit('restore_error', {'message': f'Restore failed: {str(e)}'})
+    finally:
+        restore_state['is_running'] = False
+        restore_state['cancel_requested'] = False
+
+
 # Flask Routes
 @app.route('/')
 def index():
@@ -483,7 +726,8 @@ def api_status():
         'authenticated': authenticated,
         'config': asdict(config),
         'presets': PRESETS,
-        'upload_state': upload_state
+        'upload_state': upload_state,
+        'restore_state': restore_state
     })
 
 
@@ -637,8 +881,8 @@ def api_upload_start():
     
     config = load_config()
     
-    # Reset state
-    upload_state = {
+    # Reset state (update existing dict, don't reassign)
+    upload_state.update({
         'is_running': True,
         'is_paused': False,
         'current_file': '',
@@ -649,7 +893,7 @@ def api_upload_start():
         'errors': [],
         'start_time': None,
         'cancel_requested': False
-    }
+    })
     
     # Start upload in background thread
     thread = threading.Thread(target=run_upload, args=(config,))
@@ -720,6 +964,94 @@ def api_browse():
         'parent': parent,
         'items': items
     })
+
+
+@app.route('/api/drive/folders')
+def api_drive_folders():
+    """List folders in Google Drive"""
+    if not is_authenticated():
+        return jsonify({'error': 'Not authenticated'}), 401
+    
+    parent_id = request.args.get('parent_id')
+    
+    try:
+        creds = get_credentials()
+        service = build('drive', 'v3', credentials=creds)
+        folders = list_drive_folders(service, parent_id)
+        return jsonify({'folders': folders, 'parent_id': parent_id})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/restore/start', methods=['POST'])
+def api_restore_start():
+    """Start restore process"""
+    global restore_state
+    
+    if restore_state['is_running']:
+        return jsonify({'error': 'Restore already in progress'}), 400
+    
+    if not is_authenticated():
+        return jsonify({'error': 'Not authenticated with Google Drive'}), 401
+    
+    data = request.json
+    folder_id = data.get('folder_id')
+    folder_name = data.get('folder_name', 'restored_backup')
+    dest_path = data.get('dest_path', '/workspace')
+    
+    if not folder_id:
+        return jsonify({'error': 'No folder selected'}), 400
+    
+    # Reset state (update existing dict, don't reassign)
+    restore_state.update({
+        'is_running': True,
+        'is_paused': False,
+        'current_file': '',
+        'total_files': 0,
+        'processed_files': 0,
+        'total_bytes': 0,
+        'downloaded_bytes': 0,
+        'errors': [],
+        'start_time': None,
+        'cancel_requested': False
+    })
+    
+    # Start restore in background thread
+    thread = threading.Thread(target=run_restore, args=(folder_id, folder_name, dest_path))
+    thread.daemon = True
+    thread.start()
+    
+    return jsonify({'success': True, 'message': 'Restore started'})
+
+
+@app.route('/api/restore/pause', methods=['POST'])
+def api_restore_pause():
+    """Pause restore"""
+    global restore_state
+    restore_state['is_paused'] = True
+    return jsonify({'success': True})
+
+
+@app.route('/api/restore/resume', methods=['POST'])
+def api_restore_resume():
+    """Resume restore"""
+    global restore_state
+    restore_state['is_paused'] = False
+    return jsonify({'success': True})
+
+
+@app.route('/api/restore/cancel', methods=['POST'])
+def api_restore_cancel():
+    """Cancel restore"""
+    global restore_state
+    restore_state['cancel_requested'] = True
+    return jsonify({'success': True})
+
+
+@app.route('/api/restore/status')
+def api_restore_status():
+    """Get restore status"""
+    return jsonify(restore_state)
 
 
 def main():
