@@ -57,8 +57,8 @@ def find_credentials_file():
 CREDENTIALS_FILE = find_credentials_file()
 
 # Upload settings
-CHUNK_SIZE = 50 * 1024 * 1024  # 50MB chunks for faster uploads
-MAX_WORKERS = 6  # Parallel upload threads
+CHUNK_SIZE = 25 * 1024 * 1024  # 25MB chunks
+MAX_WORKERS = 3  # Reduced parallel threads to avoid API issues
 
 # Cache for folder IDs to avoid repeated lookups
 folder_cache = {}
@@ -312,30 +312,6 @@ def get_or_create_folder(service, folder_name: str, parent_id: str = None) -> st
     return folder.get('id')
 
 
-def prebuild_folder_structure(service, files: List[Dict], root_folder_id: str):
-    """Pre-create folder structures - optimized to only create first-level folders in parallel"""
-    # Get unique first-level folders only (depth 1)
-    first_level = set()
-    for f in files:
-        parts = Path(f['rel_path']).parts[:-1]
-        if parts:
-            first_level.add(parts[0])
-    
-    if not first_level:
-        return
-    
-    socketio.emit('upload_status', {'message': f'Creating {len(first_level)} top-level folders...'})
-    
-    # Create first-level folders in parallel
-    def create_folder(folder_name):
-        return get_or_create_folder(service, folder_name, root_folder_id)
-    
-    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        list(executor.map(create_folder, first_level))
-    
-    # Subfolders will be created on-demand during upload (cached after first creation)
-
-
 def upload_single_file(service, file_info: Dict, root_folder_id: str) -> Dict:
     """Upload a single file to Google Drive. Returns result dict."""
     file_path = file_info['path']
@@ -420,11 +396,7 @@ def run_upload(config: UploadConfig):
         })
         
         # Create root folder
-        socketio.emit('upload_status', {'message': 'Creating folder structure...'})
         root_folder_id = get_or_create_folder(service, config.drive_folder_name)
-        
-        # Pre-build all folder structures (single-threaded to avoid race conditions)
-        prebuild_folder_structure(service, files, root_folder_id)
         
         socketio.emit('upload_status', {'message': f'Uploading {len(files)} files with {MAX_WORKERS} parallel workers...'})
         
