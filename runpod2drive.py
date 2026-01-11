@@ -456,13 +456,15 @@ def run_upload(config: UploadConfig):
                 
                 with upload_lock:
                     upload_state['processed_files'] += 1
-                    upload_state['uploaded_bytes'] += result['size']
                     upload_state['current_file'] = result['file']
                     
-                    if not result['success'] and result['error'] != 'Cancelled':
-                        error_msg = f"Error uploading {result['file']}: {result['error']}"
-                        upload_state['errors'].append(error_msg)
-                        socketio.emit('upload_error', {'message': error_msg, 'file': result['file']})
+                    if result['success']:
+                        upload_state['uploaded_bytes'] += result['size']
+                    else:
+                        if result['error'] != 'Cancelled':
+                            error_msg = f"Error uploading {result['file']}: {result['error']}"
+                            upload_state['errors'].append(error_msg)
+                            socketio.emit('upload_error', {'message': error_msg, 'file': result['file']})
                 
                 emit_progress()
         
