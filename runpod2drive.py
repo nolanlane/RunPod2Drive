@@ -17,6 +17,8 @@ from datetime import datetime
 from dataclasses import dataclass, asdict
 from typing import Optional, List, Dict, Any
 import mimetypes
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import queue
 
 # Allow OAuth over HTTP for development (RunPod internal network)
 os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
@@ -54,11 +56,13 @@ def find_credentials_file():
 
 CREDENTIALS_FILE = find_credentials_file()
 
-# Upload chunk size (10MB for faster uploads)
-CHUNK_SIZE = 10 * 1024 * 1024
+# Upload settings
+CHUNK_SIZE = 50 * 1024 * 1024  # 50MB chunks for faster uploads
+MAX_WORKERS = 6  # Parallel upload threads
 
 # Cache for folder IDs to avoid repeated lookups
 folder_cache = {}
+folder_cache_lock = threading.Lock()
 
 # Global state
 upload_state = {
@@ -276,10 +280,12 @@ def get_files_to_upload(source_path: str, exclusions: List[str],
 
 
 def get_or_create_folder(service, folder_name: str, parent_id: str = None) -> str:
-    """Get or create a folder in Google Drive (with caching)"""
+    """Get or create a folder in Google Drive (thread-safe with caching)"""
     cache_key = f"{parent_id}:{folder_name}"
-    if cache_key in folder_cache:
-        return folder_cache[cache_key]
+    
+    with folder_cache_lock:
+        if cache_key in folder_cache:
+            return folder_cache[cache_key]
     
     query = f"name='{folder_name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
     if parent_id:
@@ -289,7 +295,8 @@ def get_or_create_folder(service, folder_name: str, parent_id: str = None) -> st
     items = results.get('files', [])
     
     if items:
-        folder_cache[cache_key] = items[0]['id']
+        with folder_cache_lock:
+            folder_cache[cache_key] = items[0]['id']
         return items[0]['id']
     
     file_metadata = {
@@ -300,22 +307,42 @@ def get_or_create_folder(service, folder_name: str, parent_id: str = None) -> st
         file_metadata['parents'] = [parent_id]
     
     folder = service.files().create(body=file_metadata, fields='id').execute()
-    folder_cache[cache_key] = folder.get('id')
+    with folder_cache_lock:
+        folder_cache[cache_key] = folder.get('id')
     return folder.get('id')
 
 
-def upload_file_to_drive(service, file_path: str, rel_path: str, 
-                         root_folder_id: str, progress_callback=None) -> bool:
-    """Upload a single file to Google Drive, creating folders as needed"""
+def prebuild_folder_structure(service, files: List[Dict], root_folder_id: str):
+    """Pre-create all folder structures before uploading (reduces API calls during upload)"""
+    folders_needed = set()
+    for f in files:
+        parts = Path(f['rel_path']).parts[:-1]  # Exclude filename
+        for i in range(len(parts)):
+            folders_needed.add('/'.join(parts[:i+1]))
+    
+    # Sort by depth to create parent folders first
+    sorted_folders = sorted(folders_needed, key=lambda x: x.count('/'))
+    
+    for folder_path in sorted_folders:
+        parts = folder_path.split('/')
+        parent_id = root_folder_id
+        for folder_name in parts:
+            parent_id = get_or_create_folder(service, folder_name, parent_id)
+
+
+def upload_single_file(service, file_info: Dict, root_folder_id: str) -> Dict:
+    """Upload a single file to Google Drive. Returns result dict."""
+    file_path = file_info['path']
+    rel_path = file_info['rel_path']
+    file_size = file_info['size']
+    
     try:
-        # Create folder structure
+        # Get parent folder (should be cached from prebuild)
         parts = Path(rel_path).parts
         parent_id = root_folder_id
-        
         for folder_name in parts[:-1]:
             parent_id = get_or_create_folder(service, folder_name, parent_id)
         
-        # Upload file
         file_name = parts[-1]
         mime_type = mimetypes.guess_type(file_path)[0] or 'application/octet-stream'
         
@@ -324,47 +351,31 @@ def upload_file_to_drive(service, file_path: str, rel_path: str,
             'parents': [parent_id]
         }
         
-        # Check if file already exists
-        query = f"name='{file_name}' and '{parent_id}' in parents and trashed=false"
-        results = service.files().list(q=query, spaces='drive', fields='files(id)').execute()
-        existing = results.get('files', [])
-        
-        file_size = os.path.getsize(file_path)
-        
         if file_size == 0:
-            # Handle empty files
-            if existing:
-                service.files().update(fileId=existing[0]['id'], body={}).execute()
-            else:
-                service.files().create(body=file_metadata, fields='id').execute()
+            # Handle empty files - just create
+            service.files().create(body=file_metadata, fields='id').execute()
         else:
+            # Upload with large chunks, no existence check (faster)
             media = MediaFileUpload(file_path, mimetype=mime_type, resumable=True, chunksize=CHUNK_SIZE)
-            
-            if existing:
-                request = service.files().update(fileId=existing[0]['id'], media_body=media)
-            else:
-                request = service.files().create(body=file_metadata, media_body=media, fields='id')
+            request = service.files().create(body=file_metadata, media_body=media, fields='id')
             
             response = None
-            last_uploaded = 0
             while response is None:
                 if upload_state['cancel_requested']:
-                    return False
+                    return {'success': False, 'file': rel_path, 'size': file_size, 'error': 'Cancelled'}
+                while upload_state['is_paused'] and not upload_state['cancel_requested']:
+                    time.sleep(0.1)
                 status, response = request.next_chunk()
-                if status and progress_callback:
-                    current_uploaded = int(status.progress() * file_size)
-                    incremental_bytes = current_uploaded - last_uploaded
-                    last_uploaded = current_uploaded
-                    progress_callback(incremental_bytes)
         
-        return True
-    except HttpError as e:
-        raise Exception(f"Upload failed: {str(e)}")
+        return {'success': True, 'file': rel_path, 'size': file_size, 'error': None}
+    
+    except Exception as e:
+        return {'success': False, 'file': rel_path, 'size': file_size, 'error': str(e)}
 
 
 def run_upload(config: UploadConfig):
-    """Main upload function running in background thread"""
-    global upload_state
+    """Main upload function with parallel processing"""
+    global upload_state, folder_cache
     
     try:
         creds = get_credentials()
@@ -373,6 +384,9 @@ def run_upload(config: UploadConfig):
             upload_state['is_running'] = False
             socketio.emit('upload_error', {'message': 'Not authenticated'})
             return
+        
+        # Clear folder cache for fresh upload
+        folder_cache.clear()
         
         service = build('drive', 'v3', credentials=creds)
         
@@ -400,64 +414,57 @@ def run_upload(config: UploadConfig):
         })
         
         # Create root folder
+        socketio.emit('upload_status', {'message': 'Creating folder structure...'})
         root_folder_id = get_or_create_folder(service, config.drive_folder_name)
         
-        # Upload files
-        for file_info in files:
-            if upload_state['cancel_requested']:
-                break
-            
-            while upload_state['is_paused'] and not upload_state['cancel_requested']:
-                time.sleep(0.5)
-            
-            if upload_state['cancel_requested']:
-                break
-            
-            upload_state['current_file'] = file_info['rel_path']
+        # Pre-build all folder structures (single-threaded to avoid race conditions)
+        prebuild_folder_structure(service, files, root_folder_id)
+        
+        socketio.emit('upload_status', {'message': f'Uploading {len(files)} files with {MAX_WORKERS} parallel workers...'})
+        
+        # Sort files: smaller files first for faster initial progress
+        files_sorted = sorted(files, key=lambda x: x['size'])
+        
+        # Progress update function
+        def emit_progress():
             socketio.emit('upload_progress', {
-                'current_file': file_info['rel_path'],
+                'current_file': upload_state['current_file'],
                 'processed_files': upload_state['processed_files'],
                 'total_files': upload_state['total_files'],
                 'uploaded_bytes': upload_state['uploaded_bytes'],
                 'total_bytes': upload_state['total_bytes']
             })
+        
+        # Upload files in parallel
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            # Each worker gets its own service instance
+            def worker_upload(file_info):
+                worker_creds = get_credentials()
+                worker_service = build('drive', 'v3', credentials=worker_creds)
+                return upload_single_file(worker_service, file_info, root_folder_id)
             
-            try:
-                def progress_cb(bytes_uploaded):
-                    with upload_lock:
-                        upload_state['uploaded_bytes'] += bytes_uploaded
-                    socketio.emit('upload_progress', {
-                        'current_file': file_info['rel_path'],
-                        'processed_files': upload_state['processed_files'],
-                        'total_files': upload_state['total_files'],
-                        'uploaded_bytes': upload_state['uploaded_bytes'],
-                        'total_bytes': upload_state['total_bytes']
-                    })
+            # Submit all files
+            future_to_file = {executor.submit(worker_upload, f): f for f in files_sorted}
+            
+            # Process completed uploads
+            for future in as_completed(future_to_file):
+                if upload_state['cancel_requested']:
+                    executor.shutdown(wait=False, cancel_futures=True)
+                    break
                 
-                success = upload_file_to_drive(
-                    service, 
-                    file_info['path'], 
-                    file_info['rel_path'],
-                    root_folder_id,
-                    progress_cb
-                )
+                result = future.result()
                 
-                if success:
-                    with upload_lock:
-                        upload_state['processed_files'] += 1
-                        # Ensure bytes are counted if not already
-                        if upload_state['uploaded_bytes'] < sum(
-                            f['size'] for f in files[:upload_state['processed_files']]
-                        ):
-                            upload_state['uploaded_bytes'] = sum(
-                                f['size'] for f in files[:upload_state['processed_files']]
-                            )
-                            
-            except Exception as e:
-                error_msg = f"Error uploading {file_info['rel_path']}: {str(e)}"
-                upload_state['errors'].append(error_msg)
-                socketio.emit('upload_error', {'message': error_msg, 'file': file_info['rel_path']})
-                upload_state['processed_files'] += 1
+                with upload_lock:
+                    upload_state['processed_files'] += 1
+                    upload_state['uploaded_bytes'] += result['size']
+                    upload_state['current_file'] = result['file']
+                    
+                    if not result['success'] and result['error'] != 'Cancelled':
+                        error_msg = f"Error uploading {result['file']}: {result['error']}"
+                        upload_state['errors'].append(error_msg)
+                        socketio.emit('upload_error', {'message': error_msg, 'file': result['file']})
+                
+                emit_progress()
         
         # Complete
         elapsed = time.time() - upload_state['start_time']
