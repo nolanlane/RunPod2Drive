@@ -23,7 +23,8 @@ def api_status():
         'config': config.model_dump(),
         'presets': PRESETS,
         'upload_state': state.upload.to_dict(),
-        'restore_state': state.restore.to_dict()
+        'restore_state': state.restore.to_dict(),
+        'transfer_state': state.transfer.to_dict()
     })
 
 @api.route('/auth/start')
@@ -249,3 +250,51 @@ def api_restore_cancel():
 @api.route('/restore/status')
 def api_restore_status():
     return jsonify(state.restore.to_dict())
+
+@api.route('/transfer/start', methods=['POST'])
+def api_transfer_start():
+    if state.transfer.is_running:
+        return jsonify({'error': 'Transfer already in progress'}), 400
+
+    if not auth_service.is_authenticated():
+        return jsonify({'error': 'Not authenticated with Google Drive'}), 401
+
+    data = request.json or {}
+    items = data.get('items', [])
+    dest_path = data.get('dest_path', '/workspace')
+
+    if not is_safe_path(dest_path):
+        return jsonify({'error': 'Access denied: Destination path is outside of /workspace'}), 403
+
+    if not items:
+        return jsonify({'error': 'No items selected'}), 400
+
+    socketio = current_app.extensions['socketio']
+
+    thread = threading.Thread(
+        target=drive_service.run_transfer_process,
+        args=(items, dest_path, socketio)
+    )
+    thread.daemon = True
+    thread.start()
+
+    return jsonify({'success': True, 'message': 'Transfer started'})
+
+@api.route('/transfer/pause', methods=['POST'])
+def api_transfer_pause():
+    state.transfer.set_paused(True)
+    return jsonify({'success': True})
+
+@api.route('/transfer/resume', methods=['POST'])
+def api_transfer_resume():
+    state.transfer.set_paused(False)
+    return jsonify({'success': True})
+
+@api.route('/transfer/cancel', methods=['POST'])
+def api_transfer_cancel():
+    state.transfer.request_cancel()
+    return jsonify({'success': True})
+
+@api.route('/transfer/status')
+def api_transfer_status():
+    return jsonify(state.transfer.to_dict())

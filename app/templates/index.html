@@ -138,10 +138,14 @@
         </section>
 
         <!-- Tabs -->
-        <div id="main-tabs" class="hidden mb-6 flex p-1 bg-gray-100 rounded-xl max-w-md mx-auto">
+        <div id="main-tabs" class="hidden mb-6 flex p-1 bg-gray-100 rounded-xl max-w-3xl mx-auto">
             <button onclick="switchTab('upload')" id="tab-upload" class="flex-1 py-2.5 px-4 rounded-lg font-medium transition-all flex items-center justify-center gap-2 bg-white shadow-sm text-indigo-600">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/></svg>
                 Upload
+            </button>
+            <button onclick="switchTab('transfer')" id="tab-transfer" class="flex-1 py-2.5 px-4 rounded-lg font-medium transition-all flex items-center justify-center gap-2 text-gray-500 hover:text-gray-700">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"/></svg>
+                Quick Transfer
             </button>
             <button onclick="switchTab('restore')" id="tab-restore" class="flex-1 py-2.5 px-4 rounded-lg font-medium transition-all flex items-center justify-center gap-2 text-gray-500 hover:text-gray-700">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10"/></svg>
@@ -471,6 +475,60 @@
             </div>
         </section>
 
+        <!-- Quick Transfer Section -->
+        <section id="transfer-section" class="mb-8 hidden">
+            <div class="bg-white rounded-2xl p-6 card-shadow fade-in">
+                <h2 class="text-xl font-semibold text-gray-800 mb-6 flex items-center gap-2">
+                    <svg class="w-6 h-6 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"/>
+                    </svg>
+                    Quick Transfer from Drive
+                </h2>
+
+                <!-- Selected Items Display -->
+                <div class="mb-6">
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Selected Files/Folders</label>
+                    <div id="transfer-selected-items" class="min-h-[100px] border-2 border-dashed border-gray-300 rounded-lg p-4 bg-gray-50">
+                        <div class="text-center text-gray-400 py-4">
+                            <svg class="w-12 h-12 mx-auto mb-2 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10"/>
+                            </svg>
+                            <p class="text-sm">No items selected</p>
+                            <p class="text-xs mt-1">Click "Browse Drive" to select files or folders</p>
+                        </div>
+                    </div>
+                    <button onclick="openDriveBrowserForTransfer()" class="mt-3 w-full px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg transition-colors flex items-center justify-center gap-2">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
+                        </svg>
+                        Browse Drive
+                    </button>
+                </div>
+
+                <!-- Destination Path -->
+                <div class="mb-6">
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Transfer Destination</label>
+                    <div class="flex gap-2">
+                        <input type="text" id="transfer-dest-path" value="/workspace" 
+                            class="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500">
+                        <button onclick="openBrowserForTransfer()" class="px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors">
+                            <svg class="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
+                            </svg>
+                        </button>
+                    </div>
+                    <p class="mt-1 text-sm text-gray-500">Files will be transferred to this directory</p>
+                </div>
+
+                <button onclick="startQuickTransfer()" id="start-transfer-btn" class="w-full bg-emerald-600 hover:bg-emerald-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white font-medium py-3 px-6 rounded-xl transition-colors flex items-center justify-center gap-2">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"/>
+                    </svg>
+                    Start Transfer
+                </button>
+            </div>
+        </section>
+
         <!-- Restore Progress Section -->
         <section id="restore-progress" class="mb-8 hidden">
             <div class="bg-white rounded-2xl p-6 card-shadow fade-in">
@@ -561,6 +619,97 @@
                 </button>
             </div>
         </section>
+
+        <!-- Transfer Progress Section -->
+        <section id="transfer-progress" class="mb-8 hidden">
+            <div class="bg-white rounded-2xl p-6 card-shadow fade-in">
+                <div class="flex items-center justify-between mb-4">
+                    <h2 class="text-xl font-semibold text-gray-800 flex items-center gap-2">
+                        <div id="transfer-status-icon" class="w-3 h-3 rounded-full bg-emerald-500 pulse-dot"></div>
+                        <span id="transfer-status-text">Transferring...</span>
+                    </h2>
+                    <div class="flex gap-2">
+                        <button id="transfer-pause-btn" onclick="pauseTransfer()" class="px-4 py-2 bg-amber-100 hover:bg-amber-200 text-amber-700 rounded-lg transition-colors flex items-center gap-2">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                            </svg>
+                            Pause
+                        </button>
+                        <button onclick="cancelTransfer()" class="px-4 py-2 bg-red-100 hover:bg-red-200 text-red-700 rounded-lg transition-colors flex items-center gap-2">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                            </svg>
+                            Cancel
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Progress Bar -->
+                <div class="mb-6">
+                    <div class="flex justify-between text-sm text-gray-600 mb-2">
+                        <span id="transfer-progress-files">0 / 0 files</span>
+                        <span id="transfer-progress-percent">0%</span>
+                    </div>
+                    <div class="w-full bg-gray-200 rounded-full h-4 overflow-hidden">
+                        <div id="transfer-progress-bar" class="progress-bar h-full bg-gradient-to-r from-emerald-500 to-teal-500 rounded-full" style="width: 0%"></div>
+                    </div>
+                    <div class="flex justify-between text-sm text-gray-500 mt-2">
+                        <span id="transfer-progress-bytes">0 MB / 0 MB</span>
+                        <span id="transfer-progress-speed">-- MB/s</span>
+                    </div>
+                </div>
+
+                <!-- Current File -->
+                <div class="bg-gray-50 rounded-lg p-4 mb-4">
+                    <div class="text-sm text-gray-500 mb-1">Currently downloading:</div>
+                    <div id="transfer-current-file" class="font-mono text-sm text-gray-800 truncate">--</div>
+                </div>
+
+                <!-- Time Stats -->
+                <div class="grid grid-cols-2 gap-4">
+                    <div class="bg-gray-50 rounded-lg p-3 text-center">
+                        <div class="text-sm text-gray-500">Elapsed</div>
+                        <div id="transfer-elapsed-time" class="text-lg font-semibold text-gray-800">--:--:--</div>
+                    </div>
+                    <div class="bg-gray-50 rounded-lg p-3 text-center">
+                        <div class="text-sm text-gray-500">Remaining</div>
+                        <div id="transfer-remaining-time" class="text-lg font-semibold text-gray-800">--:--:--</div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Transfer Complete Section -->
+        <section id="transfer-complete" class="mb-8 hidden">
+            <div class="bg-white rounded-2xl p-6 card-shadow fade-in text-center">
+                <div class="w-20 h-20 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <svg class="w-10 h-10 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+                    </svg>
+                </div>
+                <h2 class="text-2xl font-bold text-gray-800 mb-2">Transfer Complete!</h2>
+                <p id="transfer-complete-summary" class="text-gray-600 mb-6"></p>
+                
+                <div class="grid grid-cols-3 gap-4 mb-6">
+                    <div class="bg-gray-50 rounded-xl p-4">
+                        <div id="transfer-complete-files" class="text-2xl font-bold text-emerald-600">0</div>
+                        <div class="text-sm text-gray-600">Files Transferred</div>
+                    </div>
+                    <div class="bg-gray-50 rounded-xl p-4">
+                        <div id="transfer-complete-size" class="text-2xl font-bold text-teal-600">0 MB</div>
+                        <div class="text-sm text-gray-600">Total Size</div>
+                    </div>
+                    <div class="bg-gray-50 rounded-xl p-4">
+                        <div id="transfer-complete-time" class="text-2xl font-bold text-cyan-600">00:00</div>
+                        <div class="text-sm text-gray-600">Duration</div>
+                    </div>
+                </div>
+
+                <button onclick="resetTransfer()" class="bg-emerald-600 hover:bg-emerald-700 text-white font-medium py-3 px-8 rounded-xl transition-colors">
+                    Done
+                </button>
+            </div>
+        </section>
     </main>
 
     <!-- Folder Browser Modal (Local) -->
@@ -621,6 +770,7 @@
                 <button onclick="closeDriveBrowser()" class="flex-1 py-2 border border-gray-300 rounded-lg hover:bg-gray-50">Cancel</button>
                 <button id="select-drive-folder-btn" onclick="selectDriveFolder()" disabled class="flex-1 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed">Select</button>
             </div>
+            <input type="hidden" id="drive-browser-mode" value="restore">
         </div>
     </div>
 
@@ -637,6 +787,7 @@
         let driveFolderStack = []; // Navigation history for Drive browser
         let selectedDriveFolder = null;
         let restoreMode = 'folder'; // 'folder' or 'contents'
+        let driveBrowserMode = 'restore'; // 'restore' or 'transfer'
 
         // Initialize
         document.addEventListener('DOMContentLoaded', () => {
@@ -707,6 +858,28 @@
             socket.on('restore_status', (data) => {
                 document.getElementById('restore-status-text').textContent = data.message;
             });
+            
+            // Transfer events
+            socket.on('transfer_started', (data) => {
+                if (!transferStartTime) transferStartTime = Date.now();
+                showSection('transfer-progress');
+            });
+            
+            socket.on('transfer_progress', (data) => {
+                updateTransferProgress(data);
+            });
+            
+            socket.on('transfer_error', (data) => {
+                showToast(data.message, 'error');
+            });
+            
+            socket.on('transfer_complete', (data) => {
+                showTransferComplete(data);
+            });
+            
+            socket.on('transfer_status', (data) => {
+                document.getElementById('transfer-status-text').textContent = data.message;
+            });
         }
 
         async function loadStatus() {
@@ -742,6 +915,12 @@
                     showSection('upload-progress');
                     updateProgress(data.upload_state);
                 } 
+                // Check if transfer is in progress
+                else if (data.transfer_state && data.transfer_state.is_running) {
+                    transferStartTime = data.transfer_state.start_time ? data.transfer_state.start_time * 1000 : Date.now();
+                    showSection('transfer-progress');
+                    updateTransferProgress(data.transfer_state);
+                } 
                 // Check if restore is in progress
                 else if (data.restore_state && data.restore_state.is_running) {
                     // Convert Python timestamp (seconds) to JS timestamp (milliseconds)
@@ -754,6 +933,8 @@
                     const activeTab = document.querySelector('#main-tabs button.bg-white');
                     if (activeTab && activeTab.id === 'tab-restore') {
                         switchTab('restore');
+                    } else if (activeTab && activeTab.id === 'tab-transfer') {
+                        switchTab('transfer');
                     } else {
                         switchTab('upload');
                     }
@@ -802,20 +983,28 @@
 
         function switchTab(tab) {
             const uploadBtn = document.getElementById('tab-upload');
+            const transferBtn = document.getElementById('tab-transfer');
             const restoreBtn = document.getElementById('tab-restore');
+            
+            // Remove active state from all tabs
+            [uploadBtn, transferBtn, restoreBtn].forEach(btn => {
+                btn.classList.remove('bg-white', 'shadow-sm');
+                btn.classList.add('text-gray-500');
+                btn.classList.remove('text-indigo-600', 'text-emerald-600', 'text-blue-600');
+            });
             
             if (tab === 'upload') {
                 showSection('config-section');
                 uploadBtn.classList.add('bg-white', 'shadow-sm', 'text-indigo-600');
                 uploadBtn.classList.remove('text-gray-500');
-                restoreBtn.classList.remove('bg-white', 'shadow-sm', 'text-blue-600');
-                restoreBtn.classList.add('text-gray-500');
+            } else if (tab === 'transfer') {
+                showSection('transfer-section');
+                transferBtn.classList.add('bg-white', 'shadow-sm', 'text-emerald-600');
+                transferBtn.classList.remove('text-gray-500');
             } else {
                 showSection('restore-section');
                 restoreBtn.classList.add('bg-white', 'shadow-sm', 'text-blue-600');
                 restoreBtn.classList.remove('text-gray-500');
-                uploadBtn.classList.remove('bg-white', 'shadow-sm', 'text-indigo-600');
-                uploadBtn.classList.add('text-gray-500');
                 updateRestoreFullPath();
             }
         }
@@ -824,10 +1013,11 @@
             const sections = [
                 'auth-section', 'config-section', 'scan-results', 
                 'upload-progress', 'upload-complete',
+                'transfer-section', 'transfer-progress', 'transfer-complete',
                 'restore-section', 'restore-progress', 'restore-complete'
             ];
             
-            const progressSections = ['upload-progress', 'upload-complete', 'restore-progress', 'restore-complete'];
+            const progressSections = ['upload-progress', 'upload-complete', 'transfer-progress', 'transfer-complete', 'restore-progress', 'restore-complete'];
             const isProgressActive = progressSections.includes(sectionId);
             
             // Hide/Show tabs based on whether we are in progress mode
@@ -1226,6 +1416,10 @@
             document.getElementById('select-drive-folder-btn').disabled = true;
             document.getElementById('drive-browser-modal').classList.remove('hidden');
             document.getElementById('drive-browser-modal').classList.add('flex');
+            document.getElementById('drive-browser-mode').value = 'restore';
+            document.getElementById('select-drive-folder-btn').textContent = 'Select';
+            driveFolderStack = [];
+            selectedDriveFolder = null;
             loadDriveFolders(null);
         }
 
@@ -1315,8 +1509,8 @@
             loadDriveFolders(target.id);
         }
 
-        function selectDriveFolderItem(e, id, name) {
-            selectedDriveFolder = { id, name };
+        function selectDriveFolderItem(e, id, name, type = 'folder') {
+            selectedDriveFolder = { id, name, type };
             document.getElementById('select-drive-folder-btn').disabled = false;
             
             // Highlight selected
@@ -1346,10 +1540,25 @@
         function selectDriveFolder() {
             if (!selectedDriveFolder) return;
             
-            document.getElementById('restore-folder-id').value = selectedDriveFolder.id;
-            document.getElementById('restore-folder-name').value = selectedDriveFolder.name;
-            updateRestoreFullPath();
-            closeDriveBrowser();
+            const mode = document.getElementById('drive-browser-mode').value;
+            
+            if (mode === 'transfer') {
+                // Add item to transfer list
+                addTransferItem(selectedDriveFolder.id, selectedDriveFolder.name, selectedDriveFolder.type || 'folder');
+                // Keep modal open for multiple selections
+                selectedDriveFolder = null;
+                document.getElementById('select-drive-folder-btn').disabled = true;
+                // Remove highlight from all items
+                document.querySelectorAll('#drive-browser-list > div').forEach(el => {
+                    el.classList.remove('bg-blue-100');
+                });
+            } else {
+                // Restore mode - select single folder and close
+                document.getElementById('restore-folder-id').value = selectedDriveFolder.id;
+                document.getElementById('restore-folder-name').value = selectedDriveFolder.name;
+                updateRestoreFullPath();
+                closeDriveBrowser();
+            }
         }
 
         function updateRestoreFullPath() {
@@ -1533,6 +1742,242 @@
             if (speed) speed.textContent = '-- MB/s';
             
             updateRestoreFullPath();
+        }
+
+        // Quick Transfer functions
+        let selectedTransferItems = [];
+        let transferStartTime = null;
+
+        function openDriveBrowserForTransfer() {
+            document.getElementById('drive-browser-modal').classList.remove('hidden');
+            document.getElementById('drive-browser-modal').classList.add('flex');
+            document.getElementById('drive-browser-mode').value = 'transfer';
+            document.getElementById('select-drive-folder-btn').textContent = 'Add Selected';
+            driveFolderStack = [];
+            selectedDriveFolder = null;
+            loadDriveFolders(null);
+        }
+
+        function addTransferItem(id, name, type) {
+            const exists = selectedTransferItems.find(item => item.id === id);
+            if (exists) {
+                showToast('Item already added', 'info');
+                return;
+            }
+            
+            selectedTransferItems.push({ id, name, type });
+            renderTransferItems();
+            showToast(`Added: ${name}`, 'success');
+        }
+
+        function removeTransferItem(id) {
+            selectedTransferItems = selectedTransferItems.filter(item => item.id !== id);
+            renderTransferItems();
+        }
+
+        function renderTransferItems() {
+            const container = document.getElementById('transfer-selected-items');
+            
+            if (selectedTransferItems.length === 0) {
+                container.innerHTML = `
+                    <div class="text-center text-gray-400 py-4">
+                        <svg class="w-12 h-12 mx-auto mb-2 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10"/>
+                        </svg>
+                        <p class="text-sm">No items selected</p>
+                        <p class="text-xs mt-1">Click "Browse Drive" to select files or folders</p>
+                    </div>
+                `;
+                return;
+            }
+            
+            let html = '<div class="space-y-2">';
+            selectedTransferItems.forEach(item => {
+                const icon = item.type === 'folder' ? 
+                    '<svg class="w-5 h-5 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>' :
+                    '<svg class="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"/></svg>';
+                
+                html += `
+                    <div class="flex items-center gap-3 p-3 bg-white border rounded-lg hover:bg-gray-50 transition-colors">
+                        ${icon}
+                        <span class="flex-1 text-sm font-medium text-gray-800">${escapeHtml(item.name)}</span>
+                        <button onclick="removeTransferItem('${escapeJS(item.id)}')" class="text-red-500 hover:text-red-700 transition-colors">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                            </svg>
+                        </button>
+                    </div>
+                `;
+            });
+            html += '</div>';
+            container.innerHTML = html;
+        }
+
+        function openBrowserForTransfer() {
+            currentBrowserCallback = (path) => {
+                document.getElementById('transfer-dest-path').value = path;
+            };
+            loadBrowserPath('/workspace');
+            document.getElementById('browser-modal').classList.remove('hidden');
+            document.getElementById('browser-modal').classList.add('flex');
+        }
+
+        async function startQuickTransfer() {
+            const btn = document.getElementById('start-transfer-btn');
+            const originalHtml = btn.innerHTML;
+            
+            const destPath = document.getElementById('transfer-dest-path').value;
+            
+            if (selectedTransferItems.length === 0) {
+                showToast('Please select at least one file or folder from Google Drive', 'error');
+                return;
+            }
+            
+            try {
+                btn.disabled = true;
+                btn.innerHTML = `<svg class="w-5 h-5 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 2v4m0 12v4M4.93 4.93l2.83 2.83m8.48 8.48l2.83 2.83M2 12h4m12 0h4M4.93 19.07l2.83-2.83m8.48-8.48l2.83-2.83" stroke-width="2" stroke-linecap="round"/></svg> Starting...`;
+                
+                const resp = await fetch('/api/transfer/start', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        items: selectedTransferItems,
+                        dest_path: destPath
+                    })
+                });
+                const data = await resp.json();
+                
+                if (data.error) {
+                    showToast(data.error, 'error');
+                    btn.disabled = false;
+                    btn.innerHTML = originalHtml;
+                    return;
+                }
+                
+                showToast('Transfer process initiated', 'info');
+                showSection('transfer-progress');
+                transferStartTime = Date.now();
+            } catch (e) {
+                showToast('Failed to start transfer: ' + e.message, 'error');
+                btn.disabled = false;
+                btn.innerHTML = originalHtml;
+            }
+        }
+
+        async function pauseTransfer() {
+            const btn = document.getElementById('transfer-pause-btn');
+            const isPaused = btn.textContent.includes('Resume');
+            
+            try {
+                await fetch(isPaused ? '/api/transfer/resume' : '/api/transfer/pause', { method: 'POST' });
+                
+                if (isPaused) {
+                    btn.innerHTML = `<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                    </svg> Pause`;
+                    document.getElementById('transfer-status-icon').classList.remove('bg-amber-500');
+                    document.getElementById('transfer-status-icon').classList.add('bg-emerald-500');
+                    document.getElementById('transfer-status-text').textContent = 'Transferring...';
+                } else {
+                    btn.innerHTML = `<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/>
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                    </svg> Resume`;
+                    document.getElementById('transfer-status-icon').classList.remove('bg-emerald-500');
+                    document.getElementById('transfer-status-icon').classList.add('bg-amber-500');
+                    document.getElementById('transfer-status-text').textContent = 'Paused';
+                }
+            } catch (e) {
+                showToast('Failed to pause/resume', 'error');
+            }
+        }
+
+        async function cancelTransfer() {
+            if (!confirm('Are you sure you want to cancel the transfer?')) return;
+            
+            try {
+                await fetch('/api/transfer/cancel', { method: 'POST' });
+                document.getElementById('transfer-status-text').textContent = 'Cancelling...';
+            } catch (e) {
+                showToast('Failed to cancel', 'error');
+            }
+        }
+
+        function updateTransferProgress(data) {
+            const percent = data.total_files > 0 ? (data.processed_files / data.total_files * 100) : 0;
+            
+            document.getElementById('transfer-progress-bar').style.width = percent.toFixed(1) + '%';
+            document.getElementById('transfer-progress-percent').textContent = percent.toFixed(1) + '%';
+            document.getElementById('transfer-progress-files').textContent = `${data.processed_files} / ${data.total_files} files`;
+            document.getElementById('transfer-progress-bytes').textContent = `${formatBytes(data.downloaded_bytes)} / ${formatBytes(data.total_bytes)}`;
+            document.getElementById('transfer-current-file').textContent = data.current_file || '--';
+            
+            if (transferStartTime) {
+                const elapsed = (Date.now() - transferStartTime) / 1000;
+                document.getElementById('transfer-elapsed-time').textContent = formatDuration(elapsed);
+                
+                if (data.processed_files > 0 && elapsed > 0) {
+                    const filesPerSec = data.processed_files / elapsed;
+                    const remainingFiles = data.total_files - data.processed_files;
+                    const remainingSec = remainingFiles / filesPerSec;
+                    document.getElementById('transfer-remaining-time').textContent = formatDuration(remainingSec);
+                    
+                    if (data.downloaded_bytes > 0) {
+                        const speed = data.downloaded_bytes / elapsed;
+                        document.getElementById('transfer-progress-speed').textContent = formatBytes(speed) + '/s';
+                    }
+                }
+            }
+        }
+
+        function showTransferComplete(data) {
+            document.getElementById('transfer-progress').classList.add('hidden');
+            document.getElementById('transfer-complete').classList.remove('hidden');
+            
+            document.getElementById('transfer-complete-files').textContent = data.processed_files;
+            document.getElementById('transfer-complete-size').textContent = formatBytes(data.downloaded_bytes);
+            document.getElementById('transfer-complete-time').textContent = formatDuration(data.elapsed_seconds);
+            
+            if (data.cancelled) {
+                document.getElementById('transfer-complete-summary').textContent = 'Transfer was cancelled.';
+            } else if (data.errors && data.errors.length > 0) {
+                document.getElementById('transfer-complete-summary').textContent = `Completed with ${data.errors.length} error(s). Files transferred to: ${data.dest_path}`;
+            } else {
+                document.getElementById('transfer-complete-summary').textContent = `All files transferred successfully to: ${data.dest_path}`;
+            }
+        }
+
+        function resetTransfer() {
+            transferStartTime = null;
+            selectedTransferItems = [];
+            renderTransferItems();
+            switchTab('transfer');
+            loadStatus();
+            
+            // Reset progress indicators
+            const bar = document.getElementById('transfer-progress-bar');
+            if (bar) bar.style.width = '0%';
+            
+            const percent = document.getElementById('transfer-progress-percent');
+            if (percent) percent.textContent = '0%';
+            
+            const files = document.getElementById('transfer-progress-files');
+            if (files) files.textContent = '0 / 0 files';
+            
+            const bytes = document.getElementById('transfer-progress-bytes');
+            if (bytes) bytes.textContent = '0 B / 0 B';
+            
+            const current = document.getElementById('transfer-current-file');
+            if (current) current.textContent = '--';
+            
+            const elapsed = document.getElementById('transfer-elapsed-time');
+            if (elapsed) elapsed.textContent = '--:--:--';
+            
+            const remaining = document.getElementById('transfer-remaining-time');
+            if (remaining) remaining.textContent = '--:--:--';
+            
+            const speed = document.getElementById('transfer-progress-speed');
+            if (speed) speed.textContent = '-- MB/s';
         }
 
         // Utilities

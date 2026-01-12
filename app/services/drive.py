@@ -284,12 +284,16 @@ class DriveService:
 
         return files
 
-    def download_single_file(self, service, file_info: Dict, dest_path: str) -> Dict:
+    def download_single_file(self, service, file_info: Dict, dest_path: str, progress_state=None) -> Dict:
         """Download a single file from Google Drive"""
         file_id = file_info['id']
         rel_path = file_info['path']
         file_size = file_info['size']
         export_mime = file_info.get('export_mime')
+        
+        # Default to restore state for backward compatibility
+        if progress_state is None:
+            progress_state = state.restore
 
         try:
             full_path = os.path.join(dest_path, rel_path)
@@ -306,9 +310,9 @@ class DriveService:
                 downloader = MediaIoBaseDownload(f, request)
                 done = False
                 while not done:
-                    if state.restore.cancel_requested:
+                    if progress_state.cancel_requested:
                         return {'success': False, 'file': rel_path, 'size': file_size, 'error': 'Cancelled'}
-                    while state.restore.is_paused and not state.restore.cancel_requested:
+                    while progress_state.is_paused and not progress_state.cancel_requested:
                         time.sleep(0.1)
                     status, done = downloader.next_chunk()
 
@@ -372,7 +376,7 @@ class DriveService:
                 state.restore.update_progress(file_info['path'])
                 emit_progress()
 
-                result = self.download_single_file(service, file_info, full_dest)
+                result = self.download_single_file(service, file_info, full_dest, state.restore)
 
                 if result['success']:
                     if not file_info.get('export_mime'):
@@ -401,3 +405,111 @@ class DriveService:
             socketio.emit('restore_error', {'message': f'Restore failed: {str(e)}'})
         finally:
             state.restore.stop()
+
+    def run_transfer_process(self, items: list, dest_path: str, socketio):
+        """Transfer selected files/folders from Google Drive to local destination"""
+        try:
+            state.transfer.start(0, 0)
+            if not self.credentials_provider.is_authenticated():
+                state.transfer.errors.append("Not authenticated")
+                state.transfer.stop()
+                socketio.emit('transfer_error', {'message': 'Not authenticated'})
+                return
+
+            service = self.get_service()
+
+            socketio.emit('transfer_status', {'message': 'Scanning selected items...'})
+            
+            # Collect all files from selected items
+            all_files = []
+            for item in items:
+                if item.get('type') == 'folder':
+                    # Recursively list files in folder
+                    folder_files = self.list_drive_files_recursive(service, item['id'])
+                    all_files.extend(folder_files)
+                else:
+                    # Single file - get its metadata
+                    try:
+                        file_meta = service.files().get(
+                            fileId=item['id'],
+                            fields='id,name,mimeType,size'
+                        ).execute()
+                        
+                        file_name = file_meta['name']
+                        mime_type = file_meta['mimeType']
+                        export_mime = None
+                        
+                        # Handle Google Workspace files
+                        if mime_type in WORKSPACE_EXPORT_FORMATS:
+                            export_mime, ext = WORKSPACE_EXPORT_FORMATS[mime_type]
+                            if not file_name.endswith(ext):
+                                file_name += ext
+                        
+                        all_files.append({
+                            'id': file_meta['id'],
+                            'name': file_name,
+                            'path': file_name,
+                            'mime_type': mime_type,
+                            'size': int(file_meta.get('size', 0)),
+                            'export_mime': export_mime
+                        })
+                    except Exception as e:
+                        state.transfer.errors.append(f"Failed to get metadata for {item['name']}: {str(e)}")
+            
+            total_files = len(all_files)
+            total_bytes = sum(f.get('size', 0) for f in all_files)
+            state.transfer.update_total(total_files, total_bytes)
+
+            socketio.emit('transfer_started', {
+                'total_files': total_files,
+                'total_bytes': total_bytes
+            })
+
+            last_emit_time = 0
+            def emit_progress(force=False):
+                nonlocal last_emit_time
+                now = time.time()
+                if force or now - last_emit_time > 0.5:
+                    socketio.emit('transfer_progress', state.transfer.to_dict())
+                    last_emit_time = now
+
+            # Download files
+            for file_info in all_files:
+                if state.transfer.cancel_requested:
+                    break
+
+                while state.transfer.is_paused and not state.transfer.cancel_requested:
+                    time.sleep(0.5)
+
+                state.transfer.update_progress(file_info['path'])
+                emit_progress()
+
+                result = self.download_single_file(service, file_info, dest_path, state.transfer)
+
+                if result['success']:
+                    if not file_info.get('export_mime'):
+                        state.transfer.update_progress(file_info['path'], bytes_processed=result['size'], file_completed=True)
+                    else:
+                        state.transfer.update_progress(file_info['path'], file_completed=True)
+                else:
+                    state.transfer.update_progress(file_info['path'], file_completed=True, error=result['error'])
+                    if result['error'] != 'Cancelled':
+                        socketio.emit('transfer_error', {'message': f"Error {result['file']}: {result['error']}", 'file': result['file']})
+
+                emit_progress()
+
+            emit_progress(force=True)
+            elapsed = time.time() - (state.transfer.start_time or time.time())
+            socketio.emit('transfer_complete', {
+                'processed_files': state.transfer.processed_files,
+                'downloaded_bytes': state.transfer.processed_bytes,
+                'elapsed_seconds': elapsed,
+                'errors': state.transfer.errors,
+                'cancelled': state.transfer.cancel_requested,
+                'dest_path': dest_path
+            })
+
+        except Exception as e:
+            socketio.emit('transfer_error', {'message': f'Transfer failed: {str(e)}'})
+        finally:
+            state.transfer.stop()

@@ -40,6 +40,11 @@ class ProgressState:
 
             if error:
                 self.errors.append(error)
+    
+    def update_total(self, total_files: int, total_bytes: int):
+        with self._lock:
+            self.total_files = total_files
+            self.total_bytes = total_bytes
 
     def set_paused(self, paused: bool):
         with self._lock:
@@ -74,6 +79,7 @@ class StateManager:
     def __init__(self):
         self.upload = ProgressState()
         self.restore = ProgressState()
+        self.transfer = ProgressState()
 
 # Global state instance
 state = StateManager()
