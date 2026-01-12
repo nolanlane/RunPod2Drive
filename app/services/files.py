@@ -27,19 +27,24 @@ def should_exclude(file_path: str, exclusions: List[str], include_hidden: bool) 
     return False
 
 def is_safe_path(path: str, base_directory: str = '/workspace') -> bool:
-    """Check if the path is within the allowed base directory"""
+    """Check if the path is within the allowed base directory, resolving symlinks"""
     try:
-        resolved_path = os.path.abspath(path)
-        resolved_base = os.path.abspath(base_directory)
+        resolved_path = os.path.realpath(path)
+        resolved_base = os.path.realpath(base_directory)
+        
+        # Check if paths are on the same root/drive
+        if os.path.splitdrive(resolved_path)[0] != os.path.splitdrive(resolved_base)[0]:
+            return False
+            
         return os.path.commonpath([resolved_path, resolved_base]) == resolved_base
-    except Exception:
+    except (ValueError, OSError):
         return False
 
 def get_files_to_upload(source_path: str, exclusions: List[str],
                         include_hidden: bool, max_size_mb: int) -> List[Dict]:
     """Get list of files to upload with their info"""
     files = []
-    source_path = os.path.abspath(source_path)
+    source_path = os.path.realpath(source_path)
     max_size_bytes = max_size_mb * 1024 * 1024 if max_size_mb > 0 else float('inf')
 
     if not os.path.exists(source_path):
