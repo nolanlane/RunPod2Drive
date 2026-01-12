@@ -137,6 +137,18 @@
             </div>
         </section>
 
+        <!-- Tabs -->
+        <div id="main-tabs" class="hidden mb-6 flex p-1 bg-gray-100 rounded-xl max-w-md mx-auto">
+            <button onclick="switchTab('upload')" id="tab-upload" class="flex-1 py-2.5 px-4 rounded-lg font-medium transition-all flex items-center justify-center gap-2 bg-white shadow-sm text-indigo-600">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/></svg>
+                Upload
+            </button>
+            <button onclick="switchTab('restore')" id="tab-restore" class="flex-1 py-2.5 px-4 rounded-lg font-medium transition-all flex items-center justify-center gap-2 text-gray-500 hover:text-gray-700">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10"/></svg>
+                Restore
+            </button>
+        </div>
+
         <!-- Configuration Section -->
         <section id="config-section" class="mb-8 hidden">
             <div class="bg-white rounded-2xl p-6 card-shadow fade-in">
@@ -418,7 +430,7 @@
                 <div class="mb-6">
                     <label class="block text-sm font-medium text-gray-700 mb-2">Restore Destination</label>
                     <div class="flex gap-2">
-                        <input type="text" id="restore-dest-path" value="/workspace" 
+                        <input type="text" id="restore-dest-path" value="/workspace" oninput="updateRestoreFullPath()"
                             class="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
                         <button onclick="openBrowserForRestore()" class="px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors">
                             <svg class="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -450,7 +462,7 @@
                     </div>
                 </div>
 
-                <button onclick="startRestore()" id="start-restore-btn" disabled class="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white font-medium py-3 px-6 rounded-xl transition-colors flex items-center justify-center gap-2">
+                <button onclick="startRestore()" id="start-restore-btn" class="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white font-medium py-3 px-6 rounded-xl transition-colors flex items-center justify-center gap-2">
                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10"/>
                     </svg>
@@ -677,8 +689,7 @@
             // Restore events
             socket.on('restore_started', (data) => {
                 if (!restoreStartTime) restoreStartTime = Date.now();
-                document.getElementById('restore-section').classList.add('hidden');
-                document.getElementById('restore-progress').classList.remove('hidden');
+                showSection('restore-progress');
             });
             
             socket.on('restore_progress', (data) => {
@@ -708,33 +719,44 @@
                 
                 updateAuthStatus(data.credentials_exist, data.authenticated);
                 
-                if (data.authenticated) {
-                    showSection('config-section');
-                    document.getElementById('restore-section').classList.remove('hidden');
-                    loadConfigToUI();
-                } else {
+                if (!data.authenticated) {
                     showSection('auth-section');
-                    document.getElementById('restore-section').classList.add('hidden');
                     if (!data.credentials_exist) {
-                        document.getElementById('no-credentials').classList.remove('hidden');
-                        document.getElementById('auth-btn').disabled = true;
-                        document.getElementById('auth-btn').classList.add('opacity-50', 'cursor-not-allowed');
+                        const noCreds = document.getElementById('no-credentials');
+                        if (noCreds) noCreds.classList.remove('hidden');
+                        
+                        const authBtn = document.getElementById('auth-btn');
+                        if (authBtn) {
+                            authBtn.disabled = true;
+                            authBtn.classList.add('opacity-50', 'cursor-not-allowed');
+                        }
                     }
+                    return;
                 }
+
+                // If authenticated, load config to UI
+                loadConfigToUI();
                 
                 // Check if upload is in progress
-                if (data.upload_state.is_running) {
+                if (data.upload_state && data.upload_state.is_running) {
                     showSection('upload-progress');
                     updateProgress(data.upload_state);
-                }
-                
+                } 
                 // Check if restore is in progress
-                if (data.restore_state && data.restore_state.is_running) {
+                else if (data.restore_state && data.restore_state.is_running) {
                     // Convert Python timestamp (seconds) to JS timestamp (milliseconds)
                     restoreStartTime = data.restore_state.start_time ? data.restore_state.start_time * 1000 : Date.now();
-                    document.getElementById('restore-section').classList.add('hidden');
-                    document.getElementById('restore-progress').classList.remove('hidden');
+                    showSection('restore-progress');
                     updateRestoreProgress(data.restore_state);
+                } 
+                // No process running, show the active tab or default to upload
+                else {
+                    const activeTab = document.querySelector('#main-tabs button.bg-white');
+                    if (activeTab && activeTab.id === 'tab-restore') {
+                        switchTab('restore');
+                    } else {
+                        switchTab('upload');
+                    }
                 }
             } catch (e) {
                 console.error('Failed to load status:', e);
@@ -778,18 +800,55 @@
             }
         }
 
+        function switchTab(tab) {
+            const uploadBtn = document.getElementById('tab-upload');
+            const restoreBtn = document.getElementById('tab-restore');
+            
+            if (tab === 'upload') {
+                showSection('config-section');
+                uploadBtn.classList.add('bg-white', 'shadow-sm', 'text-indigo-600');
+                uploadBtn.classList.remove('text-gray-500');
+                restoreBtn.classList.remove('bg-white', 'shadow-sm', 'text-blue-600');
+                restoreBtn.classList.add('text-gray-500');
+            } else {
+                showSection('restore-section');
+                restoreBtn.classList.add('bg-white', 'shadow-sm', 'text-blue-600');
+                restoreBtn.classList.remove('text-gray-500');
+                uploadBtn.classList.remove('bg-white', 'shadow-sm', 'text-indigo-600');
+                uploadBtn.classList.add('text-gray-500');
+                updateRestoreFullPath();
+            }
+        }
+
         function showSection(sectionId) {
-            // Don't hide config section when showing other sections after auth
-            const sections = ['auth-section', 'config-section', 'scan-results', 'upload-progress', 'upload-complete'];
+            const sections = [
+                'auth-section', 'config-section', 'scan-results', 
+                'upload-progress', 'upload-complete',
+                'restore-section', 'restore-progress', 'restore-complete'
+            ];
+            
+            const progressSections = ['upload-progress', 'upload-complete', 'restore-progress', 'restore-complete'];
+            const isProgressActive = progressSections.includes(sectionId);
+            
+            // Hide/Show tabs based on whether we are in progress mode
+            const tabsEl = document.getElementById('main-tabs');
+            if (tabsEl) {
+                if (sectionId === 'auth-section' || isProgressActive) {
+                    tabsEl.classList.add('hidden');
+                } else {
+                    tabsEl.classList.remove('hidden');
+                }
+            }
+
             sections.forEach(id => {
                 const el = document.getElementById(id);
+                if (!el) return;
+                
                 if (id === sectionId) {
                     el.classList.remove('hidden');
-                } else if (sectionId === 'config-section' || 
-                          (sectionId === 'scan-results' && id === 'config-section') ||
-                          (sectionId === 'upload-progress' && (id === 'config-section' || id === 'scan-results'))) {
-                    // Keep config visible
-                } else if (id !== 'config-section' || sectionId === 'auth-section') {
+                } else if (sectionId === 'scan-results' && id === 'config-section') {
+                    el.classList.remove('hidden');
+                } else {
                     el.classList.add('hidden');
                 }
             });
@@ -1066,12 +1125,8 @@
         }
 
         function resetUpload() {
-            document.getElementById('upload-complete').classList.add('hidden');
-            document.getElementById('scan-results').classList.add('hidden');
-            document.getElementById('error-log').classList.add('hidden');
-            document.getElementById('error-list').innerHTML = '';
-            document.getElementById('complete-errors').classList.add('hidden');
             uploadStartTime = null;
+            switchTab('upload');
             loadStatus();
         }
 
@@ -1207,7 +1262,7 @@
                 let html = '';
                 data.folders.forEach(folder => {
                     html += `<div class="px-4 py-3 hover:bg-blue-50 cursor-pointer flex items-center gap-3 border-b group transition-colors" 
-                                onclick="selectDriveFolderItem('${escapeJS(folder.id)}', '${escapeJS(folder.name)}')"
+                                onclick="selectDriveFolderItem(event, '${escapeJS(folder.id)}', '${escapeJS(folder.name)}')"
                                 ondblclick="navigateDriveInto('${escapeJS(folder.id)}', '${escapeJS(folder.name)}')">
                         <svg class="w-5 h-5 text-blue-500 group-hover:text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
@@ -1260,7 +1315,7 @@
             loadDriveFolders(target.id);
         }
 
-        function selectDriveFolderItem(id, name) {
+        function selectDriveFolderItem(e, id, name) {
             selectedDriveFolder = { id, name };
             document.getElementById('select-drive-folder-btn').disabled = false;
             
@@ -1268,7 +1323,9 @@
             document.querySelectorAll('#drive-browser-list > div').forEach(el => {
                 el.classList.remove('bg-blue-100');
             });
-            event.currentTarget.classList.add('bg-blue-100');
+            if (e && e.currentTarget) {
+                e.currentTarget.classList.add('bg-blue-100');
+            }
         }
 
         function navigateDriveInto(id, name) {
@@ -1291,7 +1348,6 @@
             
             document.getElementById('restore-folder-id').value = selectedDriveFolder.id;
             document.getElementById('restore-folder-name').value = selectedDriveFolder.name;
-            document.getElementById('start-restore-btn').disabled = false;
             updateRestoreFullPath();
             closeDriveBrowser();
         }
@@ -1313,6 +1369,9 @@
 
         // Restore functions
         async function startRestore() {
+            const btn = document.getElementById('start-restore-btn');
+            const originalHtml = btn.innerHTML;
+            
             const folderId = document.getElementById('restore-folder-id').value;
             const folderName = document.getElementById('restore-folder-name').value;
             const destPath = document.getElementById('restore-dest-path').value;
@@ -1323,6 +1382,9 @@
             }
             
             try {
+                btn.disabled = true;
+                btn.innerHTML = `<svg class="w-5 h-5 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 2v4m0 12v4M4.93 4.93l2.83 2.83m8.48 8.48l2.83 2.83M2 12h4m12 0h4M4.93 19.07l2.83-2.83m8.48-8.48l2.83-2.83" stroke-width="2" stroke-linecap="round"/></svg> Starting...`;
+                
                 const resp = await fetch('/api/restore/start', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -1337,12 +1399,18 @@
                 
                 if (data.error) {
                     showToast(data.error, 'error');
+                    btn.disabled = false;
+                    btn.innerHTML = originalHtml;
                     return;
                 }
                 
+                showToast('Restore process initiated', 'info');
+                showSection('restore-progress');
                 restoreStartTime = Date.now();
             } catch (e) {
                 showToast('Failed to start restore: ' + e.message, 'error');
+                btn.disabled = false;
+                btn.innerHTML = originalHtml;
             }
         }
 
@@ -1430,24 +1498,40 @@
         }
 
         function resetRestore() {
-            document.getElementById('restore-complete').classList.add('hidden');
-            document.getElementById('restore-progress').classList.add('hidden');
-            document.getElementById('restore-section').classList.remove('hidden');
-            document.getElementById('restore-folder-id').value = '';
-            document.getElementById('restore-folder-name').value = '';
-            document.getElementById('start-restore-btn').disabled = true;
             restoreStartTime = null;
+            switchTab('restore');
+            loadStatus();
+            
+            // Additional cleanup
             restoreMode = 'folder';
-            document.querySelector('input[name="restore-mode"][value="folder"]').checked = true;
+            const radio = document.querySelector('input[name="restore-mode"][value="folder"]');
+            if (radio) radio.checked = true;
+            
             // Reset progress indicators
-            document.getElementById('restore-progress-bar').style.width = '0%';
-            document.getElementById('restore-progress-percent').textContent = '0%';
-            document.getElementById('restore-progress-files').textContent = '0 / 0 files';
-            document.getElementById('restore-progress-bytes').textContent = '0 B / 0 B';
-            document.getElementById('restore-current-file').textContent = '--';
-            document.getElementById('restore-elapsed-time').textContent = '--:--:--';
-            document.getElementById('restore-remaining-time').textContent = '--:--:--';
-            document.getElementById('restore-progress-speed').textContent = '-- MB/s';
+            const bar = document.getElementById('restore-progress-bar');
+            if (bar) bar.style.width = '0%';
+            
+            const percent = document.getElementById('restore-progress-percent');
+            if (percent) percent.textContent = '0%';
+            
+            const files = document.getElementById('restore-progress-files');
+            if (files) files.textContent = '0 / 0 files';
+            
+            const bytes = document.getElementById('restore-progress-bytes');
+            if (bytes) bytes.textContent = '0 B / 0 B';
+            
+            const current = document.getElementById('restore-current-file');
+            if (current) current.textContent = '--';
+            
+            const elapsed = document.getElementById('restore-elapsed-time');
+            if (elapsed) elapsed.textContent = '--:--:--';
+            
+            const remaining = document.getElementById('restore-remaining-time');
+            if (remaining) remaining.textContent = '--:--:--';
+            
+            const speed = document.getElementById('restore-progress-speed');
+            if (speed) speed.textContent = '-- MB/s';
+            
             updateRestoreFullPath();
         }
 

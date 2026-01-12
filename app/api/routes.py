@@ -208,7 +208,7 @@ def api_restore_start():
     if not auth_service.is_authenticated():
         return jsonify({'error': 'Not authenticated with Google Drive'}), 401
 
-    data = request.json
+    data = request.json or {}
     folder_id = data.get('folder_id')
     folder_name = data.get('folder_name', 'restored_backup')
     dest_path = data.get('dest_path', '/workspace')
