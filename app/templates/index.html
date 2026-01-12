@@ -137,6 +137,39 @@
             </div>
         </section>
 
+        <!-- Global Performance Settings -->
+        <div id="performance-settings" class="hidden mb-6">
+            <div class="bg-gradient-to-r from-purple-50 to-indigo-50 rounded-xl p-4 border border-purple-200">
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-3">
+                        <svg class="w-5 h-5 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+                        </svg>
+                        <div>
+                            <label class="text-sm font-semibold text-gray-800">
+                                Parallel Workers: <span id="workers-display" class="text-purple-600">8</span>
+                            </label>
+                            <p class="text-xs text-gray-600">Applies to all uploads, restores, and transfers</p>
+                        </div>
+                    </div>
+                    <div class="flex items-center gap-3">
+                        <input type="range" id="max-workers-slider" value="8" min="1" max="15" 
+                            class="w-32 h-2 bg-purple-200 rounded-lg appearance-none cursor-pointer"
+                            oninput="updateWorkersDisplay(this.value)">
+                        <button onclick="saveWorkersSetting()" class="px-4 py-1.5 bg-purple-600 hover:bg-purple-700 text-white text-sm font-medium rounded-lg transition-colors">
+                            Save
+                        </button>
+                    </div>
+                </div>
+                <div class="mt-2 text-xs text-gray-600 flex gap-4">
+                    <span><strong>1-5:</strong> Safe</span>
+                    <span><strong>6-8:</strong> Recommended</span>
+                    <span><strong>9-12:</strong> Fast</span>
+                    <span><strong>13-15:</strong> May hit rate limits</span>
+                </div>
+            </div>
+        </div>
+
         <!-- Tabs -->
         <div id="main-tabs" class="hidden mb-6 flex p-1 bg-gray-100 rounded-xl max-w-3xl mx-auto">
             <button onclick="switchTab('upload')" id="tab-upload" class="flex-1 py-2.5 px-4 rounded-lg font-medium transition-all flex items-center justify-center gap-2 bg-white shadow-sm text-indigo-600">
@@ -970,6 +1003,11 @@
             document.getElementById('include-hidden').checked = config.include_hidden || false;
             document.getElementById('max-size').value = config.max_file_size_mb || 0;
             
+            // Load global workers setting
+            const maxWorkers = config.max_workers || 8;
+            document.getElementById('max-workers-slider').value = maxWorkers;
+            document.getElementById('workers-display').textContent = maxWorkers;
+            
             exclusions = config.exclusions || [];
             renderExclusions();
             
@@ -1020,13 +1058,16 @@
             const progressSections = ['upload-progress', 'upload-complete', 'transfer-progress', 'transfer-complete', 'restore-progress', 'restore-complete'];
             const isProgressActive = progressSections.includes(sectionId);
             
-            // Hide/Show tabs based on whether we are in progress mode
+            // Hide/Show tabs and performance settings based on whether we are in progress mode
             const tabsEl = document.getElementById('main-tabs');
+            const perfEl = document.getElementById('performance-settings');
             if (tabsEl) {
                 if (sectionId === 'auth-section' || isProgressActive) {
                     tabsEl.classList.add('hidden');
+                    if (perfEl) perfEl.classList.add('hidden');
                 } else {
                     tabsEl.classList.remove('hidden');
+                    if (perfEl) perfEl.classList.remove('hidden');
                 }
             }
 
@@ -1122,6 +1163,7 @@
                 exclusions: exclusions,
                 include_hidden: document.getElementById('include-hidden').checked,
                 max_file_size_mb: parseInt(document.getElementById('max-size').value) || 0,
+                max_workers: config.max_workers || 8,  // Keep existing workers setting
                 preset: document.querySelector('.preset-btn.border-indigo-500')?.dataset.preset || 'default'
             };
             
@@ -1978,6 +2020,37 @@
             
             const speed = document.getElementById('transfer-progress-speed');
             if (speed) speed.textContent = '-- MB/s';
+        }
+
+        // Global Workers Setting Functions
+        function updateWorkersDisplay(value) {
+            document.getElementById('workers-display').textContent = value;
+        }
+
+        async function saveWorkersSetting() {
+            const maxWorkers = parseInt(document.getElementById('max-workers-slider').value) || 8;
+            const clampedWorkers = Math.max(1, Math.min(15, maxWorkers));
+            
+            // Update config with new workers setting
+            config.max_workers = clampedWorkers;
+            
+            try {
+                const resp = await fetch('/api/config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(config)
+                });
+                const data = await resp.json();
+                
+                if (data.error) {
+                    showToast(data.error, 'error');
+                } else {
+                    showToast(`Workers set to ${clampedWorkers} - applies to all operations`, 'success');
+                    config = data.config;
+                }
+            } catch (e) {
+                showToast('Failed to save workers setting: ' + e.message, 'error');
+            }
         }
 
         // Utilities

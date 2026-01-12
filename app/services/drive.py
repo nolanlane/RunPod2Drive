@@ -16,7 +16,7 @@ from app.config import UploadConfig
 
 # Constants
 CHUNK_SIZE = 25 * 1024 * 1024  # 25MB chunks
-MAX_WORKERS = 3  # Reduced parallel threads
+DEFAULT_MAX_WORKERS = int(os.getenv('MAX_WORKERS', '8'))  # Can be overridden by env var
 
 # Google Workspace export formats
 WORKSPACE_EXPORT_FORMATS = {
@@ -195,7 +195,8 @@ class DriveService:
                     socketio.emit('upload_progress', state.upload.to_dict())
                     last_emit_time = now
 
-            with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            max_workers = config.max_workers if hasattr(config, 'max_workers') else DEFAULT_MAX_WORKERS
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
                 def worker_upload(file_info):
                     worker_service = self.get_service()
                     return self.upload_single_file(worker_service, file_info, root_folder_id)
@@ -331,6 +332,11 @@ class DriveService:
                 socketio.emit('restore_error', {'message': 'Not authenticated'})
                 return
 
+            # Load config to get max_workers setting
+            from app.config import load_upload_config, AppConfig
+            app_config = AppConfig()
+            config = load_upload_config(app_config.CONFIG_FILE)
+            
             service = self.get_service()
 
             socketio.emit('restore_status', {'message': 'Scanning Drive folder...'})
@@ -365,30 +371,35 @@ class DriveService:
                     socketio.emit('restore_progress', state.restore.to_dict())
                     last_emit_time = now
 
-            # Sequential download
-            for file_info in files:
-                if state.restore.cancel_requested:
-                    break
+            # Parallel download with ThreadPoolExecutor
+            max_workers = config.max_workers if hasattr(config, 'max_workers') else DEFAULT_MAX_WORKERS
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                def worker_download(file_info):
+                    state.restore.update_progress(file_info['path'])
+                    worker_service = self.get_service()
+                    return self.download_single_file(worker_service, file_info, full_dest, state.restore)
 
-                while state.restore.is_paused and not state.restore.cancel_requested:
-                    time.sleep(0.5)
+                future_to_file = {executor.submit(worker_download, f): f for f in files}
 
-                state.restore.update_progress(file_info['path'])
-                emit_progress()
+                for future in as_completed(future_to_file):
+                    if state.restore.cancel_requested:
+                        executor.shutdown(wait=False, cancel_futures=True)
+                        break
 
-                result = self.download_single_file(service, file_info, full_dest, state.restore)
+                    result = future.result()
+                    file_info = future_to_file[future]
 
-                if result['success']:
-                    if not file_info.get('export_mime'):
-                        state.restore.update_progress(file_info['path'], bytes_processed=result['size'], file_completed=True)
+                    if result['success']:
+                        if not file_info.get('export_mime'):
+                            state.restore.update_progress(result['file'], bytes_processed=result['size'], file_completed=True)
+                        else:
+                            state.restore.update_progress(result['file'], file_completed=True)
                     else:
-                        state.restore.update_progress(file_info['path'], file_completed=True)
-                else:
-                    state.restore.update_progress(file_info['path'], file_completed=True, error=result['error'])
-                    if result['error'] != 'Cancelled':
-                        socketio.emit('restore_error', {'message': f"Error {result['file']}: {result['error']}", 'file': result['file']})
+                        state.restore.update_progress(result['file'], file_completed=True, error=result['error'])
+                        if result['error'] != 'Cancelled':
+                            socketio.emit('restore_error', {'message': f"Error {result['file']}: {result['error']}", 'file': result['file']})
 
-                emit_progress()
+                    emit_progress()
 
             emit_progress(force=True)
             elapsed = time.time() - (state.restore.start_time or time.time())
@@ -416,6 +427,11 @@ class DriveService:
                 socketio.emit('transfer_error', {'message': 'Not authenticated'})
                 return
 
+            # Load config to get max_workers setting
+            from app.config import load_upload_config, AppConfig
+            app_config = AppConfig()
+            config = load_upload_config(app_config.CONFIG_FILE)
+            
             service = self.get_service()
 
             socketio.emit('transfer_status', {'message': 'Scanning selected items...'})
@@ -473,30 +489,35 @@ class DriveService:
                     socketio.emit('transfer_progress', state.transfer.to_dict())
                     last_emit_time = now
 
-            # Download files
-            for file_info in all_files:
-                if state.transfer.cancel_requested:
-                    break
+            # Parallel download with ThreadPoolExecutor
+            max_workers = config.max_workers if hasattr(config, 'max_workers') else DEFAULT_MAX_WORKERS
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                def worker_download(file_info):
+                    state.transfer.update_progress(file_info['path'])
+                    worker_service = self.get_service()
+                    return self.download_single_file(worker_service, file_info, dest_path, state.transfer)
 
-                while state.transfer.is_paused and not state.transfer.cancel_requested:
-                    time.sleep(0.5)
+                future_to_file = {executor.submit(worker_download, f): f for f in all_files}
 
-                state.transfer.update_progress(file_info['path'])
-                emit_progress()
+                for future in as_completed(future_to_file):
+                    if state.transfer.cancel_requested:
+                        executor.shutdown(wait=False, cancel_futures=True)
+                        break
 
-                result = self.download_single_file(service, file_info, dest_path, state.transfer)
+                    result = future.result()
+                    file_info = future_to_file[future]
 
-                if result['success']:
-                    if not file_info.get('export_mime'):
-                        state.transfer.update_progress(file_info['path'], bytes_processed=result['size'], file_completed=True)
+                    if result['success']:
+                        if not file_info.get('export_mime'):
+                            state.transfer.update_progress(result['file'], bytes_processed=result['size'], file_completed=True)
+                        else:
+                            state.transfer.update_progress(result['file'], file_completed=True)
                     else:
-                        state.transfer.update_progress(file_info['path'], file_completed=True)
-                else:
-                    state.transfer.update_progress(file_info['path'], file_completed=True, error=result['error'])
-                    if result['error'] != 'Cancelled':
-                        socketio.emit('transfer_error', {'message': f"Error {result['file']}: {result['error']}", 'file': result['file']})
+                        state.transfer.update_progress(result['file'], file_completed=True, error=result['error'])
+                        if result['error'] != 'Cancelled':
+                            socketio.emit('transfer_error', {'message': f"Error {result['file']}: {result['error']}", 'file': result['file']})
 
-                emit_progress()
+                    emit_progress()
 
             emit_progress(force=True)
             elapsed = time.time() - (state.transfer.start_time or time.time())

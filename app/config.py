@@ -93,6 +93,7 @@ class UploadConfig(BaseModel):
     include_hidden: bool = Field(default=False)
     max_file_size_mb: int = Field(default=0)  # 0 = no limit
     preset: str = Field(default='default')
+    max_workers: int = Field(default=8, ge=1, le=15)  # 1-15 workers, default 8
 
 class AppConfig(BaseSettings):
     """Application level configuration from environment variables"""
