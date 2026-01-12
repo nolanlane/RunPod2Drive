@@ -17,6 +17,7 @@ echo "📦 Packaging RunPod2Drive..."
 cd "$SCRIPT_DIR"
 
 # Create a tarball excluding unnecessary files
+# Using git ls-files if available to respect .gitignore would be better, but explicit is fine
 tar -czf /tmp/runpod2drive.tar.gz \
     --exclude='*.pyc' \
     --exclude='__pycache__' \
@@ -24,12 +25,14 @@ tar -czf /tmp/runpod2drive.tar.gz \
     --exclude='token.json' \
     --exclude='server.log' \
     --exclude='config.json' \
-    runpod2drive.py \
+    --exclude='runpod2drive.py' \
+    app/ \
+    run.py \
+    wsgi.py \
     requirements.txt \
     README.md \
     credentials.json.example \
-    templates/ \
-    static/ 2>/dev/null || true
+    2>/dev/null || true
 
 echo "📤 Uploading to RunPod..."
 scp /tmp/runpod2drive.tar.gz "$REMOTE":/workspace/
@@ -43,9 +46,12 @@ ssh "$REMOTE" "cd /workspace/RunPod2Drive && pip install -r requirements.txt"
 echo ""
 echo "✅ Deployed successfully!"
 echo ""
-echo "Next steps on your RunPod:"
+echo "To run with Gunicorn (Production):"
 echo "  1. cd /workspace/RunPod2Drive"
-echo "  2. Copy your credentials.json file there"
-echo "  3. python runpod2drive.py --port 7860"
+echo "  2. gunicorn -k eventlet -w 1 --bind 0.0.0.0:7860 wsgi:app"
+echo ""
+echo "To run with Python directly (Dev):"
+echo "  1. cd /workspace/RunPod2Drive"
+echo "  2. python run.py"
 echo ""
 echo "Then access via your RunPod's exposed port or proxy URL"
