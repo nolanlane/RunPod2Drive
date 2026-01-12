@@ -2,7 +2,7 @@ import json
 import os
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel, Field
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Presets configuration
 PRESETS = {
@@ -97,6 +97,11 @@ class UploadConfig(BaseModel):
 
 class AppConfig(BaseSettings):
     """Application level configuration from environment variables"""
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        extra="ignore"
+    )
+    
     SECRET_KEY: str = Field(default='dev-secret-key-change-in-prod')
     OAUTHLIB_INSECURE_TRANSPORT: str = Field(default='1')  # Allow OAuth over HTTP for dev
     PUBLIC_URL: Optional[str] = None
@@ -105,10 +110,6 @@ class AppConfig(BaseSettings):
     CREDENTIALS_FILE: str = 'credentials.json'
     TOKEN_FILE: str = 'token.json'
     CONFIG_FILE: str = 'config.json'
-
-    class Config:
-        env_file = ".env"
-        extra = "ignore"
 
 def load_upload_config(config_file: str) -> UploadConfig:
     """Load configuration from file"""

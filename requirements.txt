@@ -5,6 +5,6 @@ google-auth-oauthlib
 google-api-python-client
 python-socketio
 eventlet
-pydantic
-pydantic-settings
+pydantic>=2.0.0
+pydantic-settings>=2.0.0
 gunicorn
