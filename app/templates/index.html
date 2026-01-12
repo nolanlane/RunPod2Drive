@@ -562,8 +562,12 @@
                     </svg>
                 </button>
             </div>
-            <div id="browser-path" class="text-sm text-gray-500 mb-3 font-mono bg-gray-50 p-2 rounded"></div>
-            <div id="browser-list" class="flex-1 overflow-y-auto border rounded-lg">
+            <div id="browser-path-container" class="mb-3">
+                <div id="browser-breadcrumbs" class="flex flex-wrap items-center gap-1 text-sm bg-gray-50 p-2 rounded border border-gray-100 overflow-x-auto whitespace-nowrap">
+                    <!-- Breadcrumbs will be here -->
+                </div>
+            </div>
+            <div id="browser-list" class="flex-1 overflow-y-auto border rounded-lg min-h-[300px]">
             </div>
             <div class="flex gap-3 mt-4">
                 <button onclick="closeBrowser()" class="flex-1 py-2 border border-gray-300 rounded-lg hover:bg-gray-50">Cancel</button>
@@ -588,11 +592,18 @@
                     </svg>
                 </button>
             </div>
-            <div id="drive-browser-path" class="text-sm text-gray-500 mb-3 font-mono bg-blue-50 p-2 rounded flex items-center gap-2">
-                <span id="drive-path-text">My Drive</span>
+            <div id="drive-browser-path-container" class="mb-3">
+                <div id="drive-browser-breadcrumbs" class="flex flex-wrap items-center gap-1 text-sm bg-blue-50 p-2 rounded border border-blue-100 overflow-x-auto whitespace-nowrap">
+                    <!-- Drive breadcrumbs will be here -->
+                </div>
             </div>
-            <div id="drive-browser-list" class="flex-1 overflow-y-auto border rounded-lg min-h-[200px]">
-                <div class="p-4 text-gray-500 text-center">Loading...</div>
+            <div id="drive-browser-list" class="flex-1 overflow-y-auto border rounded-lg min-h-[300px]">
+                <div class="p-8 text-gray-500 text-center flex flex-col items-center gap-2">
+                    <svg class="w-8 h-8 animate-spin text-blue-400" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                        <path d="M12 2v4m0 12v4M4.93 4.93l2.83 2.83m8.48 8.48l2.83 2.83M2 12h4m12 0h4M4.93 19.07l2.83-2.83m8.48-8.48l2.83-2.83" stroke-width="2" stroke-linecap="round"/>
+                    </svg>
+                    Loading folders...
+                </div>
             </div>
             <div class="flex gap-3 mt-4">
                 <button onclick="closeDriveBrowser()" class="flex-1 py-2 border border-gray-300 rounded-lg hover:bg-gray-50">Cancel</button>
@@ -619,6 +630,14 @@
         document.addEventListener('DOMContentLoaded', () => {
             initSocket();
             loadStatus();
+            
+            // Global keyboard shortcuts
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape') {
+                    closeBrowser();
+                    closeDriveBrowser();
+                }
+            });
             
             // Check for auth callback
             const urlParams = new URLSearchParams(window.location.search);
@@ -791,6 +810,7 @@
         }
 
         async function logout() {
+            if (!confirm('Are you sure you want to disconnect from Google Drive?')) return;
             try {
                 await fetch('/api/auth/logout', { method: 'POST' });
                 location.reload();
@@ -873,6 +893,9 @@
         }
 
         async function scanFiles() {
+            const btn = event.currentTarget;
+            const originalHtml = btn.innerHTML;
+            
             const scanConfig = {
                 source_path: document.getElementById('source-path').value,
                 exclusions: exclusions,
@@ -881,6 +904,9 @@
             };
             
             try {
+                btn.disabled = true;
+                btn.innerHTML = `<svg class="w-5 h-5 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 2v4m0 12v4M4.93 4.93l2.83 2.83m8.48 8.48l2.83 2.83M2 12h4m12 0h4M4.93 19.07l2.83-2.83m8.48-8.48l2.83-2.83" stroke-width="2" stroke-linecap="round"/></svg> Scanning...`;
+                
                 showToast('Scanning files...', 'info');
                 const resp = await fetch('/api/scan', {
                     method: 'POST',
@@ -898,17 +924,22 @@
                 document.getElementById('scan-size').textContent = formatBytes(data.total_size);
                 document.getElementById('scan-types').textContent = Object.keys(data.extensions).length;
                 
-                // Estimate time (rough: 1MB/s)
-                const estSeconds = data.total_size / (1024 * 1024);
+                // Estimate time (more realistic: 5MB/s for RunPod network)
+                const estSeconds = data.total_size / (5 * 1024 * 1024);
                 document.getElementById('scan-time').textContent = formatDuration(estSeconds);
                 
                 document.getElementById('sample-files').innerHTML = data.sample_files
-                    .map(f => `<div class="py-1 border-b border-gray-200 last:border-0">${escapeHtml(f)}</div>`)
+                    .map(f => `<div class="py-1 border-b border-gray-100 last:border-0 truncate" title="${escapeHtml(f)}">${escapeHtml(f)}</div>`)
                     .join('');
                 
                 showSection('scan-results');
+                // Scroll results into view
+                document.getElementById('scan-results').scrollIntoView({ behavior: 'smooth', block: 'start' });
             } catch (e) {
                 showToast('Scan failed: ' + e.message, 'error');
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = originalHtml;
             }
         }
 
@@ -973,27 +1004,35 @@
         function updateProgress(data) {
             const percent = data.total_bytes > 0 ? (data.uploaded_bytes / data.total_bytes * 100) : 0;
             
-            document.getElementById('progress-bar').style.width = percent.toFixed(1) + '%';
+            const bar = document.getElementById('progress-bar');
+            bar.style.width = percent.toFixed(1) + '%';
+            
+            // Add subtle pulse if slow or near completion
+            if (percent > 95) bar.classList.add('pulse-dot');
+            else bar.classList.remove('pulse-dot');
+
             document.getElementById('progress-percent').textContent = percent.toFixed(1) + '%';
-            document.getElementById('progress-files').textContent = `${data.processed_files} / ${data.total_files} files`;
+            document.getElementById('progress-files').textContent = `${data.processed_files.toLocaleString()} / ${data.total_files.toLocaleString()} files`;
             document.getElementById('progress-bytes').textContent = `${formatBytes(data.uploaded_bytes)} / ${formatBytes(data.total_bytes)}`;
-            document.getElementById('current-file').textContent = data.current_file || '--';
+            document.getElementById('current-file').textContent = data.current_file || 'Waiting for next file...';
             
             if (uploadStartTime) {
                 const elapsed = (Date.now() - uploadStartTime) / 1000;
                 document.getElementById('elapsed-time').textContent = formatDuration(elapsed);
                 
-                if (data.processed_files > 0 && elapsed > 0) {
+                if (data.uploaded_bytes > 0 && elapsed > 0) {
+                    const bytesPerSec = data.uploaded_bytes / elapsed;
+                    const remainingBytes = data.total_bytes - data.uploaded_bytes;
+                    const remainingSec = remainingBytes / bytesPerSec;
+                    
+                    document.getElementById('remaining-time').textContent = formatDuration(remainingSec);
+                    document.getElementById('progress-speed').textContent = formatBytes(bytesPerSec) + '/s';
+                } else if (data.processed_files > 0) {
+                    // Fallback to file count for estimation if bytes are 0 (e.g. small files)
                     const filesPerSec = data.processed_files / elapsed;
                     const remainingFiles = data.total_files - data.processed_files;
                     const remainingSec = remainingFiles / filesPerSec;
                     document.getElementById('remaining-time').textContent = formatDuration(remainingSec);
-                    
-                    // Show speed in MB/s based on uploaded bytes
-                    if (data.uploaded_bytes > 0) {
-                        const speed = data.uploaded_bytes / elapsed;
-                        document.getElementById('progress-speed').textContent = formatBytes(speed) + '/s';
-                    }
                 }
             }
         }
@@ -1061,31 +1100,50 @@
                 }
                 
                 currentBrowserPath = data.current;
-                document.getElementById('browser-path').textContent = data.current;
+                renderBreadcrumbs('browser-breadcrumbs', data.current, loadBrowserPath);
                 
                 let html = '';
-                if (data.parent) {
-                    html += `<div onclick="loadBrowserPath('${escapeHtml(data.parent)}')" class="px-4 py-2 hover:bg-gray-50 cursor-pointer flex items-center gap-2 border-b">
-                        <svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 17l-5-5m0 0l5-5m-5 5h12"/>
-                        </svg>
-                        <span class="text-gray-600">..</span>
-                    </div>`;
-                }
-                
                 data.items.filter(i => i.is_dir).forEach(item => {
-                    html += `<div onclick="loadBrowserPath('${escapeHtml(item.path)}')" class="px-4 py-2 hover:bg-gray-50 cursor-pointer flex items-center gap-2 border-b">
-                        <svg class="w-5 h-5 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    html += `<div onclick="loadBrowserPath('${escapeJS(item.path)}')" class="px-4 py-3 hover:bg-indigo-50 cursor-pointer flex items-center gap-3 border-b group transition-colors">
+                        <svg class="w-5 h-5 text-indigo-400 group-hover:text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
                         </svg>
-                        <span>${escapeHtml(item.name)}</span>
+                        <span class="text-gray-700 font-medium">${escapeHtml(item.name)}</span>
+                        <svg class="w-4 h-4 text-gray-300 ml-auto opacity-0 group-hover:opacity-100 transition-opacity" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                        </svg>
                     </div>`;
                 });
                 
-                document.getElementById('browser-list').innerHTML = html || '<div class="p-4 text-gray-500 text-center">No subdirectories</div>';
+                document.getElementById('browser-list').innerHTML = html || '<div class="p-12 text-gray-400 text-center flex flex-col items-center gap-2"><svg class="w-12 h-12 text-gray-200" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" stroke-width="2"/></svg>No subdirectories here</div>';
             } catch (e) {
                 showToast('Failed to browse: ' + e.message, 'error');
             }
+        }
+
+        function renderBreadcrumbs(containerId, path, navigateFn) {
+            const container = document.getElementById(containerId);
+            const parts = path === '/' ? [''] : path.split('/');
+            let currentPath = '';
+            
+            let html = parts.map((part, i) => {
+                if (i === 0 && part === '') {
+                    currentPath = '/';
+                    return `<button onclick="${navigateFn.name}('/')" class="hover:text-indigo-600 hover:bg-white px-1.5 py-0.5 rounded transition-colors">Root</button>`;
+                }
+                if (part === '') return '';
+                
+                currentPath = currentPath === '/' ? `/${part}` : `${currentPath}/${part}`;
+                const thisPath = currentPath;
+                return `
+                    <span class="text-gray-300">/</span>
+                    <button onclick="${navigateFn.name}('${escapeJS(thisPath)}')" class="hover:text-indigo-600 hover:bg-white px-1.5 py-0.5 rounded transition-colors">${escapeHtml(part)}</button>
+                `;
+            }).join('');
+            
+            container.innerHTML = html;
+            // Auto-scroll to end
+            container.scrollLeft = container.scrollWidth;
         }
 
         function selectCurrentPath() {
@@ -1123,7 +1181,14 @@
 
         async function loadDriveFolders(parentId) {
             const listEl = document.getElementById('drive-browser-list');
-            listEl.innerHTML = '<div class="p-4 text-gray-500 text-center">Loading...</div>';
+            listEl.innerHTML = `
+                <div class="p-12 text-gray-500 text-center flex flex-col items-center gap-2">
+                    <svg class="w-8 h-8 animate-spin text-blue-400" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                        <path d="M12 2v4m0 12v4M4.93 4.93l2.83 2.83m8.48 8.48l2.83 2.83M2 12h4m12 0h4M4.93 19.07l2.83-2.83m8.48-8.48l2.83-2.83" stroke-width="2" stroke-linecap="round"/>
+                    </svg>
+                    Loading folders...
+                </div>
+            `;
             
             try {
                 const url = parentId 
@@ -1133,45 +1198,66 @@
                 const data = await resp.json();
                 
                 if (data.error) {
-                    listEl.innerHTML = `<div class="p-4 text-red-500 text-center">${escapeHtml(data.error)}</div>`;
+                    listEl.innerHTML = `<div class="p-8 text-red-500 text-center flex flex-col items-center gap-2"><svg class="w-8 h-8 text-red-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" stroke-width="2"/></svg>${escapeHtml(data.error)}</div>`;
                     return;
                 }
                 
+                renderDriveBreadcrumbs();
+                
                 let html = '';
-                
-                // Back button if not at root
-                if (driveFolderStack.length > 0) {
-                    html += `<div onclick="navigateDriveBack()" class="px-4 py-2 hover:bg-gray-50 cursor-pointer flex items-center gap-2 border-b">
-                        <svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 17l-5-5m0 0l5-5m-5 5h12"/>
-                        </svg>
-                        <span class="text-gray-600">..</span>
-                    </div>`;
-                }
-                
                 data.folders.forEach(folder => {
-                    html += `<div class="px-4 py-2 hover:bg-blue-50 cursor-pointer flex items-center gap-2 border-b group" 
-                                onclick="selectDriveFolderItem('${escapeHtml(folder.id)}', '${escapeHtml(folder.name)}')"
-                                ondblclick="navigateDriveInto('${escapeHtml(folder.id)}', '${escapeHtml(folder.name)}')">
-                        <svg class="w-5 h-5 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    html += `<div class="px-4 py-3 hover:bg-blue-50 cursor-pointer flex items-center gap-3 border-b group transition-colors" 
+                                onclick="selectDriveFolderItem('${escapeJS(folder.id)}', '${escapeJS(folder.name)}')"
+                                ondblclick="navigateDriveInto('${escapeJS(folder.id)}', '${escapeJS(folder.name)}')">
+                        <svg class="w-5 h-5 text-blue-500 group-hover:text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
                         </svg>
-                        <span class="flex-1">${escapeHtml(folder.name)}</span>
-                        <span class="text-xs text-gray-400 opacity-0 group-hover:opacity-100">double-click to open</span>
+                        <span class="flex-1 text-gray-700 font-medium">${escapeHtml(folder.name)}</span>
+                        <div class="flex items-center gap-2">
+                            <span class="text-[10px] text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded opacity-0 group-hover:opacity-100 uppercase font-bold tracking-wider transition-opacity">Open</span>
+                            <svg class="w-4 h-4 text-gray-300 opacity-0 group-hover:opacity-100 transition-opacity" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                            </svg>
+                        </div>
                     </div>`;
                 });
                 
-                listEl.innerHTML = html || '<div class="p-4 text-gray-500 text-center">No folders found</div>';
-                
-                // Update path display
-                const pathText = driveFolderStack.length > 0 
-                    ? 'My Drive / ' + driveFolderStack.map(f => f.name).join(' / ')
-                    : 'My Drive';
-                document.getElementById('drive-path-text').textContent = pathText;
+                listEl.innerHTML = html || '<div class="p-12 text-gray-400 text-center flex flex-col items-center gap-2"><svg class="w-12 h-12 text-gray-200" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" stroke-width="2"/></svg>No subfolders found</div>';
                 
             } catch (e) {
-                listEl.innerHTML = `<div class="p-4 text-red-500 text-center">Failed to load: ${e.message}</div>`;
+                listEl.innerHTML = `<div class="p-8 text-red-500 text-center flex flex-col items-center gap-2">Failed to load: ${e.message}</div>`;
             }
+        }
+
+        function renderDriveBreadcrumbs() {
+            const container = document.getElementById('drive-browser-breadcrumbs');
+            
+            let html = `<button onclick="navigateDriveToRoot()" class="hover:text-blue-600 hover:bg-white px-1.5 py-0.5 rounded transition-colors">My Drive</button>`;
+            
+            driveFolderStack.forEach((folder, i) => {
+                html += `
+                    <span class="text-blue-200">/</span>
+                    <button onclick="navigateDriveToStack(${i})" class="hover:text-blue-600 hover:bg-white px-1.5 py-0.5 rounded transition-colors">${escapeHtml(folder.name)}</button>
+                `;
+            });
+            
+            container.innerHTML = html;
+            container.scrollLeft = container.scrollWidth;
+        }
+
+        function navigateDriveToRoot() {
+            driveFolderStack = [];
+            selectedDriveFolder = null;
+            document.getElementById('select-drive-folder-btn').disabled = true;
+            loadDriveFolders(null);
+        }
+
+        function navigateDriveToStack(index) {
+            driveFolderStack = driveFolderStack.slice(0, index + 1);
+            const target = driveFolderStack[index];
+            selectedDriveFolder = null;
+            document.getElementById('select-drive-folder-btn').disabled = true;
+            loadDriveFolders(target.id);
         }
 
         function selectDriveFolderItem(id, name) {
@@ -1382,6 +1468,27 @@
             return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
         }
 
+        function escapeJS(str) {
+            if (typeof str !== 'string') return '';
+            return str.replace(/[\\/'"\n\r\t\b\f<>&]/g, (char) => {
+                switch (char) {
+                    case '\\': return '\\\\';
+                    case '/': return '\\/';
+                    case '\'': return "\\'";
+                    case '"': return '\\"';
+                    case '\n': return '\\n';
+                    case '\r': return '\\r';
+                    case '\t': return '\\t';
+                    case '\b': return '\\b';
+                    case '\f': return '\\f';
+                    case '<': return '\\u003c';
+                    case '>': return '\\u003e';
+                    case '&': return '\\u0026';
+                    default: return char;
+                }
+            });
+        }
+
         function escapeHtml(text) {
             const div = document.createElement('div');
             div.textContent = text;
@@ -1389,16 +1496,46 @@
         }
 
         function showToast(message, type = 'info') {
+            const container = document.getElementById('toast-container') || createToastContainer();
+            
             const toast = document.createElement('div');
-            const colors = {
-                success: 'bg-green-500',
-                error: 'bg-red-500',
-                info: 'bg-blue-500'
+            const icons = {
+                success: '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>',
+                error: '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>',
+                info: '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>'
             };
-            toast.className = `fixed bottom-4 right-4 ${colors[type]} text-white px-6 py-3 rounded-lg shadow-lg z-50 fade-in`;
-            toast.textContent = message;
-            document.body.appendChild(toast);
-            setTimeout(() => toast.remove(), 3000);
+            
+            const colors = {
+                success: 'bg-green-600',
+                error: 'bg-red-600',
+                info: 'bg-indigo-600'
+            };
+            
+            toast.className = `${colors[type]} text-white px-4 py-3 rounded-xl shadow-2xl flex items-center gap-3 fade-in mb-3 min-w-[300px] pointer-events-auto`;
+            toast.innerHTML = `
+                <div class="flex-shrink-0">${icons[type]}</div>
+                <div class="flex-1 font-medium text-sm">${escapeHtml(message)}</div>
+                <button onclick="this.parentElement.remove()" class="text-white/50 hover:text-white transition-colors">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                </button>
+            `;
+            
+            container.appendChild(toast);
+            setTimeout(() => {
+                if (toast.parentElement) {
+                    toast.classList.add('opacity-0', 'translate-y-2');
+                    toast.style.transition = 'all 0.3s ease';
+                    setTimeout(() => toast.remove(), 300);
+                }
+            }, 5000);
+        }
+
+        function createToastContainer() {
+            const container = document.createElement('div');
+            container.id = 'toast-container';
+            container.className = 'fixed bottom-4 right-4 z-[100] flex flex-col items-end pointer-events-none';
+            document.body.appendChild(container);
+            return container;
         }
     </script>
 </body>
