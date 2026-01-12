@@ -1,5 +1,6 @@
 import os
-from typing import Optional, List
+import threading
+from typing import Optional
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
 from google.auth.transport.requests import Request
@@ -24,18 +25,30 @@ class AuthService:
     def __init__(self, credentials_file: str, token_file: str):
         self.credentials_file = find_credentials_file(credentials_file)
         self.token_file = token_file
+        self._lock = threading.Lock()
 
     def get_credentials(self) -> Optional[Credentials]:
         """Get valid credentials from token file"""
         if os.path.exists(self.token_file):
             try:
+                # Load credentials
                 creds = Credentials.from_authorized_user_file(self.token_file, SCOPES)
+
                 if creds and creds.valid:
                     return creds
+
+                # Check expiry and refresh if possible
                 if creds and creds.expired and creds.refresh_token:
-                    creds.refresh(Request())
-                    with open(self.token_file, 'w') as token:
-                        token.write(creds.to_json())
+                    # Lock only the refresh and write operation to prevent race conditions
+                    with self._lock:
+                        # Reload to ensure we don't refresh a token that was just refreshed by another thread
+                        creds = Credentials.from_authorized_user_file(self.token_file, SCOPES)
+                        if creds.valid:
+                            return creds
+
+                        creds.refresh(Request())
+                        with open(self.token_file, 'w') as token:
+                            token.write(creds.to_json())
                     return creds
             except Exception:
                 pass
@@ -53,12 +66,14 @@ class AuthService:
         )
 
     def save_credentials(self, creds: Credentials):
-        with open(self.token_file, 'w') as token:
-            token.write(creds.to_json())
+        with self._lock:
+            with open(self.token_file, 'w') as token:
+                token.write(creds.to_json())
 
     def logout(self):
-        if os.path.exists(self.token_file):
-            os.remove(self.token_file)
+        with self._lock:
+            if os.path.exists(self.token_file):
+                os.remove(self.token_file)
 
     def credentials_exist(self) -> bool:
         return os.path.exists(self.credentials_file)
