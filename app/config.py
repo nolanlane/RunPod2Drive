@@ -1,5 +1,6 @@
 import json
 import os
+import secrets
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -102,7 +103,7 @@ class AppConfig(BaseSettings):
         extra="ignore"
     )
     
-    SECRET_KEY: str = Field(default='dev-secret-key-change-in-prod')
+    SECRET_KEY: str = Field(default_factory=lambda: secrets.token_hex(32))
     OAUTHLIB_INSECURE_TRANSPORT: str = Field(default='1')  # Allow OAuth over HTTP for dev
     PUBLIC_URL: Optional[str] = None
 
