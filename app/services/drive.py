@@ -31,46 +31,53 @@ class DriveService:
         self.credentials_provider = credentials_provider
         self.folder_cache = {}
         self.folder_cache_lock = threading.Lock()
+        self._thread_local = threading.local()
 
     def get_service(self):
-        creds = self.credentials_provider.get_credentials()
-        if not creds:
-            raise Exception("Not authenticated")
-        return build('drive', 'v3', credentials=creds)
+        # Use thread-local storage to reuse service instances across files in the same thread
+        if not hasattr(self._thread_local, 'service'):
+            creds = self.credentials_provider.get_credentials()
+            if not creds:
+                raise Exception("Not authenticated")
+            self._thread_local.service = build('drive', 'v3', credentials=creds)
+        return self._thread_local.service
 
     def get_or_create_folder(self, service, folder_name: str, parent_id: str = None) -> str:
         """Get or create a folder in Google Drive (thread-safe with caching)"""
         cache_key = f"{parent_id}:{folder_name}"
 
         with self.folder_cache_lock:
+            # Check cache first
             if cache_key in self.folder_cache:
                 return self.folder_cache[cache_key]
 
-        query = f"name='{folder_name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
-        if parent_id:
-            query += f" and '{parent_id}' in parents"
+            # If not in cache, check Drive (within lock to prevent duplicate creation)
+            query = f"name='{folder_name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
+            if parent_id:
+                query += f" and '{parent_id}' in parents"
+            else:
+                query += " and 'root' in parents"
 
-        results = service.files().list(q=query, spaces='drive', fields='files(id, name)').execute()
-        items = results.get('files', [])
+            results = service.files().list(q=query, spaces='drive', fields='files(id, name)').execute()
+            items = results.get('files', [])
 
-        if items:
-            folder_id = items[0]['id']
-            with self.folder_cache_lock:
+            if items:
+                folder_id = items[0]['id']
                 self.folder_cache[cache_key] = folder_id
-            return folder_id
+                return folder_id
 
-        file_metadata = {
-            'name': folder_name,
-            'mimeType': 'application/vnd.google-apps.folder'
-        }
-        if parent_id:
-            file_metadata['parents'] = [parent_id]
+            # Create if not found
+            file_metadata = {
+                'name': folder_name,
+                'mimeType': 'application/vnd.google-apps.folder'
+            }
+            if parent_id:
+                file_metadata['parents'] = [parent_id]
 
-        folder = service.files().create(body=file_metadata, fields='id').execute()
-        folder_id = folder.get('id')
-        with self.folder_cache_lock:
+            folder = service.files().create(body=file_metadata, fields='id').execute()
+            folder_id = folder.get('id')
             self.folder_cache[cache_key] = folder_id
-        return folder_id
+            return folder_id
 
     def list_folders(self, parent_id: str = None) -> List[Dict]:
         service = self.get_service()
@@ -180,16 +187,17 @@ class DriveService:
 
             files_sorted = sorted(files, key=lambda x: x['size'])
 
-            def emit_progress():
-                socketio.emit('upload_progress', state.upload.to_dict())
+            last_emit_time = 0
+            def emit_progress(force=False):
+                nonlocal last_emit_time
+                now = time.time()
+                if force or now - last_emit_time > 0.5:
+                    socketio.emit('upload_progress', state.upload.to_dict())
+                    last_emit_time = now
 
             with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
                 def worker_upload(file_info):
-                    # Create new service instance per thread if needed, or share if thread-safe
-                    # google-api-python-client is generally thread-safe for different requests
-                    # but separate instances are safer for auth refresh
-                    worker_creds = self.credentials_provider.get_credentials()
-                    worker_service = build('drive', 'v3', credentials=worker_creds)
+                    worker_service = self.get_service()
                     return self.upload_single_file(worker_service, file_info, root_folder_id)
 
                 future_to_file = {executor.submit(worker_upload, f): f for f in files_sorted}
@@ -211,6 +219,7 @@ class DriveService:
                     emit_progress()
 
             # Finalize
+            emit_progress(force=True)
             elapsed = time.time() - (state.upload.start_time or time.time())
             socketio.emit('upload_complete', {
                 'processed_files': state.upload.processed_files,
@@ -344,8 +353,13 @@ class DriveService:
 
             socketio.emit('restore_status', {'message': f'Downloading {len(files)} files...'})
 
-            def emit_progress():
-                socketio.emit('restore_progress', state.restore.to_dict())
+            last_emit_time = 0
+            def emit_progress(force=False):
+                nonlocal last_emit_time
+                now = time.time()
+                if force or now - last_emit_time > 0.5:
+                    socketio.emit('restore_progress', state.restore.to_dict())
+                    last_emit_time = now
 
             # Sequential download
             for file_info in files:
@@ -372,6 +386,7 @@ class DriveService:
 
                 emit_progress()
 
+            emit_progress(force=True)
             elapsed = time.time() - (state.restore.start_time or time.time())
             socketio.emit('restore_complete', {
                 'processed_files': state.restore.processed_files,

@@ -26,6 +26,15 @@ def should_exclude(file_path: str, exclusions: List[str], include_hidden: bool) 
 
     return False
 
+def is_safe_path(path: str, base_directory: str = '/workspace') -> bool:
+    """Check if the path is within the allowed base directory"""
+    try:
+        resolved_path = os.path.abspath(path)
+        resolved_base = os.path.abspath(base_directory)
+        return os.path.commonpath([resolved_path, resolved_base]) == resolved_base
+    except Exception:
+        return False
+
 def get_files_to_upload(source_path: str, exclusions: List[str],
                         include_hidden: bool, max_size_mb: int) -> List[Dict]:
     """Get list of files to upload with their info"""

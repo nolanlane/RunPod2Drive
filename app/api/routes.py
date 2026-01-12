@@ -5,7 +5,7 @@ from dataclasses import asdict
 
 from app.config import PRESETS, load_upload_config, save_upload_config, UploadConfig, AppConfig
 from app.services.instances import auth_service, drive_service, app_config
-from app.services.files import get_files_to_upload, browse_directory
+from app.services.files import get_files_to_upload, browse_directory, is_safe_path
 from app.state import state
 
 api = Blueprint('api', __name__, url_prefix='/api')
@@ -116,6 +116,9 @@ def api_scan():
     if not os.path.exists(source_path):
         return jsonify({'error': f'Path does not exist: {source_path}'}), 400
 
+    if not is_safe_path(source_path):
+        return jsonify({'error': 'Access denied: Path is outside of /workspace'}), 403
+
     files = get_files_to_upload(source_path, exclusions, include_hidden, max_size_mb)
 
     total_size = sum(f['size'] for f in files)
@@ -176,6 +179,8 @@ def api_upload_status():
 @api.route('/browse')
 def api_browse():
     path = request.args.get('path', '/workspace')
+    if not is_safe_path(path):
+        return jsonify({'error': 'Access denied: Path is outside of /workspace'}), 403
     try:
         result = browse_directory(path)
         return jsonify(result)
@@ -208,6 +213,9 @@ def api_restore_start():
     folder_name = data.get('folder_name', 'restored_backup')
     dest_path = data.get('dest_path', '/workspace')
     contents_only = data.get('contents_only', False)
+
+    if not is_safe_path(dest_path):
+        return jsonify({'error': 'Access denied: Destination path is outside of /workspace'}), 403
 
     if not folder_id:
         return jsonify({'error': 'No folder selected'}), 400
