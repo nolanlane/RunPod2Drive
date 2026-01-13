@@ -255,8 +255,9 @@ class DriveService:
         except Exception as e:
             return {'success': False, 'file': rel_path, 'size': file_size, 'error': str(e)}
 
-    def _list_folder_children(self, service, folder_id: str) -> List[Dict]:
+    def _list_folder_children(self, folder_id: str) -> List[Dict]:
         """List immediate child folders of a folder (with pagination)"""
+        service = self.get_service()
         children = []
         page_token = None
         while True:
@@ -274,36 +275,40 @@ class DriveService:
                 break
         return children
 
-    def list_folders_recursive(self, service, folder_id: str, current_path_parts: tuple = ()) -> Dict[tuple, str]:
+    def list_folders_recursive(self, service, folder_id: str, current_path_parts: tuple = (), max_workers: int = None) -> Dict[tuple, str]:
         """List all folders using parallel breadth-first traversal"""
         found_folders = {}
         # Queue: list of (folder_id, path_parts) to process
         current_level = [(folder_id, current_path_parts)]
         
-        max_workers = int(os.getenv('MAX_WORKERS', '8'))
+        if max_workers is None:
+            max_workers = DEFAULT_MAX_WORKERS
         
-        while current_level:
-            next_level = []
-            
-            # Process current level in parallel
-            with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                future_to_info = {
-                    executor.submit(self._list_folder_children, service, fid): (fid, path_parts)
-                    for fid, path_parts in current_level
-                }
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            while current_level:
+                next_level = []
+
+                # Batch submissions to cap in-flight futures and avoid memory spikes
+                batch_size = max_workers * 10
+                for i in range(0, len(current_level), batch_size):
+                    batch = current_level[i:i + batch_size]
+                    future_to_info = {
+                        executor.submit(self._list_folder_children, fid): (fid, path_parts)
+                        for fid, path_parts in batch
+                    }
+                    
+                    for future in as_completed(future_to_info):
+                        parent_id, parent_path = future_to_info[future]
+                        try:
+                            children = future.result()
+                            for child in children:
+                                child_path = parent_path + (child['name'],)
+                                found_folders[child_path] = child['id']
+                                next_level.append((child['id'], child_path))
+                        except Exception:
+                            pass  # Skip folders we can't access
                 
-                for future in as_completed(future_to_info):
-                    parent_id, parent_path = future_to_info[future]
-                    try:
-                        children = future.result()
-                        for child in children:
-                            child_path = parent_path + (child['name'],)
-                            found_folders[child_path] = child['id']
-                            next_level.append((child['id'], child_path))
-                    except Exception:
-                        pass  # Skip folders we can't access
-            
-            current_level = next_level
+                current_level = next_level
         
         return found_folders
 
@@ -346,7 +351,8 @@ class DriveService:
             root_folder_id = self.get_or_create_folder(service, config.drive_folder_name)
             
             # Prefetch existing structure
-            existing_structure = self.list_folders_recursive(service, root_folder_id)
+            max_workers = config.max_workers if hasattr(config, 'max_workers') else DEFAULT_MAX_WORKERS
+            existing_structure = self.list_folders_recursive(service, root_folder_id, max_workers=max_workers)
             with self.folder_cache_lock:
                 # The keys in existing_structure are paths (tuple of parts)
                 # We need to map these to (parent_id:name) -> id for the get_or_create_folder cache
@@ -389,14 +395,16 @@ class DriveService:
             path_map_lock = threading.Lock()
 
             max_workers = config.max_workers if hasattr(config, 'max_workers') else DEFAULT_MAX_WORKERS
+            pending_folders = set()  # Track folders being created to prevent duplicates
+            
             with ThreadPoolExecutor(max_workers=max_workers) as folder_executor:
                 for depth in sorted(depth_map.keys()):
                     # Collect folders to create at this depth (under lock)
                     folders_to_create = []
                     with path_map_lock:
                         for folder_parts in depth_map[depth]:
-                            # Skip folders that already exist
-                            if folder_parts in path_to_id_map:
+                            # Skip folders that already exist or are being created
+                            if folder_parts in path_to_id_map or folder_parts in pending_folders:
                                 continue
                             # Get parent ID, skip if parent doesn't exist
                             parent_path = folder_parts[:-1]
@@ -405,6 +413,7 @@ class DriveService:
                             parent_id = path_to_id_map[parent_path]
                             folder_name = folder_parts[-1]
                             folders_to_create.append((folder_parts, parent_id, folder_name))
+                            pending_folders.add(folder_parts)
                     
                     # Submit tasks without holding the lock
                     futures_to_parts = {}
@@ -417,7 +426,10 @@ class DriveService:
                             folder_id = future.result()
                             with path_map_lock:
                                 path_to_id_map[parts] = folder_id
+                                pending_folders.discard(parts)
                         except Exception as e:
+                            with path_map_lock:
+                                pending_folders.discard(parts)
                             state.upload.errors.append(f"Failed to create folder {'/'.join(parts)}: {str(e)}")
 
             socketio.emit('upload_status', {'message': f'Uploading {len(files)} files...'})
@@ -468,13 +480,12 @@ class DriveService:
         finally:
             state.upload.stop()
 
-    def list_drive_files_recursive(self, service, folder_id: str, path: str = '') -> List[Dict]:
-        """Recursively list all files in a Drive folder with pagination"""
-        files = []
+    def _list_folder_contents(self, folder_id: str) -> List[Dict]:
+        """List immediate contents of a folder (files and subfolders)"""
+        service = self.get_service()
+        items = []
         page_token = None
-
         while True:
-            # List files in current folder
             query = f"'{folder_id}' in parents and trashed=false"
             results = service.files().list(
                 q=query,
@@ -483,43 +494,72 @@ class DriveService:
                 pageSize=1000,
                 pageToken=page_token
             ).execute()
-
-            for item in results.get('files', []):
-                mime_type = item['mimeType']
-                item_path = os.path.join(path, item['name']) if path else item['name']
-
-                if mime_type == 'application/vnd.google-apps.folder':
-                    # Recurse into subfolder
-                    files.extend(self.list_drive_files_recursive(service, item['id'], item_path))
-                elif mime_type in WORKSPACE_EXPORT_FORMATS:
-                    # Google Workspace file - needs export
-                    export_mime, ext = WORKSPACE_EXPORT_FORMATS[mime_type]
-                    files.append({
-                        'id': item['id'],
-                        'name': item['name'],
-                        'path': item_path + ext,
-                        'size': 0,  # Size unknown for Workspace files
-                        'export_mime': export_mime
-                    })
-                elif mime_type.startswith('application/vnd.google-apps.'):
-                    continue
-                else:
-                    files.append({
-                        'id': item['id'],
-                        'name': item['name'],
-                        'path': item_path,
-                        'size': int(item.get('size', 0)),
-                        'export_mime': None
-                    })
-
+            items.extend(results.get('files', []))
             page_token = results.get('nextPageToken')
             if not page_token:
                 break
+        return items
 
+    def list_drive_files_recursive(self, service, folder_id: str, path: str = '', max_workers: int = None) -> List[Dict]:
+        """List all files using parallel breadth-first traversal"""
+        files = []
+        # Queue: list of (folder_id, path) to process
+        current_level = [(folder_id, path)]
+        
+        if max_workers is None:
+            max_workers = DEFAULT_MAX_WORKERS
+        
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            while current_level:
+                next_level = []
+
+                # Batch submissions to cap in-flight futures and avoid memory spikes
+                batch_size = max_workers * 10
+                for i in range(0, len(current_level), batch_size):
+                    batch = current_level[i:i + batch_size]
+                    future_to_info = {
+                        executor.submit(self._list_folder_contents, fid): (fid, folder_path)
+                        for fid, folder_path in batch
+                    }
+                    
+                    for future in as_completed(future_to_info):
+                        _, folder_path = future_to_info[future]
+                        try:
+                            items = future.result()
+                            for item in items:
+                                mime_type = item['mimeType']
+                                item_path = os.path.join(folder_path, item['name']) if folder_path else item['name']
+                                
+                                if mime_type == 'application/vnd.google-apps.folder':
+                                    next_level.append((item['id'], item_path))
+                                elif mime_type in WORKSPACE_EXPORT_FORMATS:
+                                    export_mime, ext = WORKSPACE_EXPORT_FORMATS[mime_type]
+                                    files.append({
+                                        'id': item['id'],
+                                        'name': item['name'],
+                                        'path': item_path + ext,
+                                        'size': 0,
+                                        'export_mime': export_mime
+                                    })
+                                elif mime_type.startswith('application/vnd.google-apps.'):
+                                    continue
+                                else:
+                                    files.append({
+                                        'id': item['id'],
+                                        'name': item['name'],
+                                        'path': item_path,
+                                        'size': int(item.get('size', 0)),
+                                        'export_mime': None
+                                    })
+                        except Exception:
+                            pass  # Skip folders we can't access
+                
+                current_level = next_level
+        
         return files
 
     def download_single_file(self, service, file_info: Dict, dest_path: str, progress_state=None) -> Dict:
-        """Download a single file from Google Drive"""
+        """Download a single file from Google Drive with retry logic"""
         file_id = file_info['id']
         rel_path = file_info['path']
         file_size = file_info['size']
@@ -529,33 +569,54 @@ class DriveService:
         if progress_state is None:
             progress_state = state.restore
 
-        try:
-            full_path = os.path.join(dest_path, rel_path)
-            parent_dir = os.path.dirname(full_path)
-            if parent_dir:
-                os.makedirs(parent_dir, exist_ok=True)
+        full_path = os.path.join(dest_path, rel_path)
+        parent_dir = os.path.dirname(full_path)
+        
+        last_error = None
+        for attempt in range(MAX_RETRIES + 1):
+            try:
+                if parent_dir:
+                    os.makedirs(parent_dir, exist_ok=True)
 
-            if export_mime:
-                request = service.files().export_media(fileId=file_id, mimeType=export_mime)
-            else:
-                request = service.files().get_media(fileId=file_id)
+                if export_mime:
+                    request = service.files().export_media(fileId=file_id, mimeType=export_mime)
+                else:
+                    request = service.files().get_media(fileId=file_id)
 
-            with open(full_path, 'wb') as f:
-                downloader = MediaIoBaseDownload(f, request)
-                done = False
-                while not done:
-                    if progress_state.cancel_requested:
-                        return {'success': False, 'file': rel_path, 'size': file_size, 'error': 'Cancelled'}
-                    while progress_state.is_paused and not progress_state.cancel_requested:
-                        time.sleep(0.1)
-                    status, done = downloader.next_chunk()
+                with open(full_path, 'wb') as f:
+                    downloader = MediaIoBaseDownload(f, request)
+                    done = False
+                    while not done:
+                        if progress_state.cancel_requested:
+                            # Clean up partial file on cancel
+                            try:
+                                os.remove(full_path)
+                            except OSError:
+                                pass
+                            return {'success': False, 'file': rel_path, 'size': file_size, 'error': 'Cancelled'}
+                        while progress_state.is_paused and not progress_state.cancel_requested:
+                            time.sleep(0.1)
+                        status, done = downloader.next_chunk()
 
-            # Get actual file size after download
-            actual_size = os.path.getsize(full_path) if os.path.exists(full_path) else file_size
-            return {'success': True, 'file': rel_path, 'size': actual_size, 'error': None}
+                # Get actual file size after download
+                actual_size = os.path.getsize(full_path) if os.path.exists(full_path) else file_size
+                return {'success': True, 'file': rel_path, 'size': actual_size, 'error': None}
 
-        except Exception as e:
-            return {'success': False, 'file': rel_path, 'size': file_size, 'error': str(e)}
+            except Exception as e:
+                last_error = e
+                # Clean up partial file before retry
+                try:
+                    if os.path.exists(full_path):
+                        os.remove(full_path)
+                except OSError:
+                    pass
+                
+                if attempt < MAX_RETRIES:
+                    # Exponential backoff with jitter
+                    sleep_time = (INITIAL_BACKOFF * (2 ** attempt)) + random.random()
+                    time.sleep(sleep_time)
+        
+        return {'success': False, 'file': rel_path, 'size': file_size, 'error': str(last_error)}
 
     def run_restore_process(self, folder_id: str, folder_name: str, dest_path: str, contents_only: bool, socketio):
         try:
@@ -572,8 +633,10 @@ class DriveService:
             
             service = self.get_service()
 
+            max_workers = config.max_workers if hasattr(config, 'max_workers') else DEFAULT_MAX_WORKERS
+            
             socketio.emit('restore_status', {'message': 'Scanning Drive folder...'})
-            files = self.list_drive_files_recursive(service, folder_id)
+            files = self.list_drive_files_recursive(service, folder_id, path='', max_workers=max_workers)
 
             if not files:
                 state.restore.stop()
@@ -581,18 +644,34 @@ class DriveService:
                 return
 
             total_bytes = sum(f['size'] for f in files if not f.get('export_mime'))
+            
+            # Determine destination path
+            if contents_only:
+                full_dest = dest_path
+            else:
+                full_dest = os.path.join(dest_path, folder_name)
+            
+            # Check available disk space (with 10% buffer)
+            try:
+                os.makedirs(full_dest, exist_ok=True)
+                disk_stats = os.statvfs(full_dest)
+                available_bytes = disk_stats.f_bavail * disk_stats.f_frsize
+                required_bytes = int(total_bytes * 1.1)  # 10% buffer for Workspace file exports
+                
+                if available_bytes < required_bytes:
+                    state.restore.stop()
+                    error_msg = f'Insufficient disk space: {available_bytes // (1024*1024)}MB available, {required_bytes // (1024*1024)}MB required'
+                    socketio.emit('restore_error', {'message': error_msg})
+                    return
+            except OSError as e:
+                state.restore.errors.append(f"Could not check disk space: {str(e)}")
+            
             state.restore.start(len(files), total_bytes)
 
             socketio.emit('restore_started', {
                 'total_files': state.restore.total_files,
                 'total_bytes': state.restore.total_bytes
             })
-
-            if contents_only:
-                full_dest = dest_path
-            else:
-                full_dest = os.path.join(dest_path, folder_name)
-            os.makedirs(full_dest, exist_ok=True)
 
             socketio.emit('restore_status', {'message': f'Downloading {len(files)} files...'})
 
@@ -660,6 +739,7 @@ class DriveService:
             config = load_upload_config(app_config.CONFIG_FILE)
             
             service = self.get_service()
+            max_workers = config.max_workers if hasattr(config, 'max_workers') else DEFAULT_MAX_WORKERS
 
             socketio.emit('transfer_status', {'message': 'Scanning selected items...'})
             
@@ -669,7 +749,7 @@ class DriveService:
             for item in items:
                 if item.get('type') == 'folder':
                     # Recursively list files in folder
-                    folder_files = self.list_drive_files_recursive(service, item['id'])
+                    folder_files = self.list_drive_files_recursive(service, item['id'], path='', max_workers=max_workers)
                     all_files.extend(folder_files)
                 else:
                     # Single file - get its metadata
