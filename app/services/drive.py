@@ -1,7 +1,9 @@
 import os
 import threading
 import time
+import random
 import mimetypes
+import hashlib
 from pathlib import Path
 from typing import List, Dict, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -16,6 +18,9 @@ from app.config import UploadConfig
 
 # Constants
 CHUNK_SIZE = 25 * 1024 * 1024  # 25MB chunks
+RESUMABLE_THRESHOLD = 5 * 1024 * 1024  # Use simple upload for files < 5MB
+MAX_RETRIES = 5
+INITIAL_BACKOFF = 1  # seconds
 DEFAULT_MAX_WORKERS = int(os.getenv('MAX_WORKERS', '8'))  # Can be overridden by env var
 
 # Google Workspace export formats
@@ -108,6 +113,22 @@ class DriveService:
 
         return folders
 
+    def _worker_create_folder(self, parent_id, folder_name):
+        """Worker task for creating folders"""
+        service = self.get_service()
+        return self.get_or_create_folder(service, folder_name, parent_id)
+
+    def _worker_upload(self, file_info, root_folder_id):
+        """Worker task for uploading files"""
+        service = self.get_service()
+        return self.upload_single_file(service, file_info, root_folder_id)
+
+    def _worker_download(self, file_info, dest_path, progress_state):
+        """Worker task for downloading files"""
+        progress_state.update_progress(file_info['path'])
+        service = self.get_service()
+        return self.download_single_file(service, file_info, dest_path, progress_state)
+
     def upload_single_file(self, service, file_info: Dict, root_folder_id: str) -> Dict:
         """Upload a single file to Google Drive. Returns result dict."""
         file_path = file_info['path']
@@ -130,23 +151,74 @@ class DriveService:
             }
 
             if file_size == 0:
-                service.files().create(body=file_metadata, fields='id').execute()
+                response = service.files().create(body=file_metadata, fields='id, md5Checksum').execute()
+            elif file_size < RESUMABLE_THRESHOLD:
+                # Simple upload for small files to reduce request overhead
+                media = MediaFileUpload(file_path, mimetype=mime_type, resumable=False)
+                response = service.files().create(
+                    body=file_metadata,
+                    media_body=media,
+                    fields='id, md5Checksum'
+                ).execute()
             else:
+                # Resumable upload for larger files
                 media = MediaFileUpload(file_path, mimetype=mime_type, resumable=True, chunksize=CHUNK_SIZE)
-                request = service.files().create(body=file_metadata, media_body=media, fields='id')
+                request = service.files().create(
+                    body=file_metadata,
+                    media_body=media,
+                    fields='id, md5Checksum'
+                )
 
                 response = None
+                retries = 0
                 while response is None:
                     if state.upload.cancel_requested:
                         return {'success': False, 'file': rel_path, 'size': file_size, 'error': 'Cancelled'}
                     while state.upload.is_paused and not state.upload.cancel_requested:
                         time.sleep(0.1)
-                    status, response = request.next_chunk()
+                    
+                    try:
+                        status, response = request.next_chunk()
+                        retries = 0  # Reset retries on success
+                    except Exception as e:
+                        retries += 1
+                        if retries > MAX_RETRIES:
+                            raise e
+                        
+                        # Exponential backoff with jitter
+                        sleep_time = (INITIAL_BACKOFF * (2 ** (retries - 1))) + random.random()
+                        time.sleep(sleep_time)
+                        continue
 
             return {'success': True, 'file': rel_path, 'size': file_size, 'error': None}
 
         except Exception as e:
             return {'success': False, 'file': rel_path, 'size': file_size, 'error': str(e)}
+
+    def list_folders_recursive(self, service, folder_id: str, current_path_parts: tuple = ()) -> Dict[tuple, str]:
+        """Recursively list all folders in a Drive folder to populate cache"""
+        found_folders = {}
+        page_token = None
+        while True:
+            query = f"'{folder_id}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false"
+            results = service.files().list(
+                q=query,
+                spaces='drive',
+                fields='nextPageToken, files(id, name)',
+                pageSize=1000,
+                pageToken=page_token
+            ).execute()
+            
+            for item in results.get('files', []):
+                folder_path = current_path_parts + (item['name'],)
+                found_folders[folder_path] = item['id']
+                # Recurse
+                found_folders.update(self.list_folders_recursive(service, item['id'], folder_path))
+            
+            page_token = results.get('nextPageToken')
+            if not page_token:
+                break
+        return found_folders
 
     def run_upload_process(self, config: UploadConfig, socketio):
         """Background process for uploading"""
@@ -182,7 +254,66 @@ class DriveService:
                 'total_bytes': state.upload.total_bytes
             })
 
+            # Pre-create folder structure to avoid bottlenecks in parallel workers
+            socketio.emit('upload_status', {'message': 'Preparing folder structure...'})
             root_folder_id = self.get_or_create_folder(service, config.drive_folder_name)
+            
+            # Prefetch existing structure
+            existing_structure = self.list_folders_recursive(service, root_folder_id)
+            with self.folder_cache_lock:
+                # The keys in existing_structure are paths (tuple of parts)
+                # We need to map these to (parent_id:name) -> id for the get_or_create_folder cache
+                
+                # First, map the root folder's direct children
+                # Then for each folder, we know its children.
+                
+                # Helper to map paths to IDs
+                path_to_id = {(): root_folder_id}
+                path_to_id.update(existing_structure)
+                
+                for path_parts, folder_id in existing_structure.items():
+                    parent_path = path_parts[:-1]
+                    name = path_parts[-1]
+                    if parent_path in path_to_id:
+                        parent_id = path_to_id[parent_path]
+                        cache_key = f"{parent_id}:{name}"
+                        self.folder_cache[cache_key] = folder_id
+
+            unique_folders = set()
+            for f in files:
+                rel_path = f['rel_path']
+                parts = Path(rel_path).parts
+                if len(parts) > 1:
+                    for i in range(1, len(parts)):
+                        unique_folders.add(parts[:i])
+            
+            # Sort by depth and create in parallel levels
+            sorted_folders = sorted(list(unique_folders), key=len)
+            depth_map = {}
+            for folder_parts in sorted_folders:
+                depth = len(folder_parts)
+                if depth not in depth_map:
+                    depth_map[depth] = []
+                depth_map[depth].append(folder_parts)
+            
+            # Map path parts to IDs for parent lookup
+            path_to_id_map = {(): root_folder_id}
+            path_to_id_map.update(existing_structure)
+
+            max_workers = config.max_workers if hasattr(config, 'max_workers') else DEFAULT_MAX_WORKERS
+            with ThreadPoolExecutor(max_workers=max_workers) as folder_executor:
+                for depth in sorted(depth_map.keys()):
+                    futures_to_parts = {}
+                    for folder_parts in depth_map[depth]:
+                        parent_id = path_to_id_map[folder_parts[:-1]]
+                        folder_name = folder_parts[-1]
+                        futures_to_parts[folder_executor.submit(self._worker_create_folder, parent_id, folder_name)] = folder_parts
+                    
+                    for future in as_completed(futures_to_parts):
+                        parts = futures_to_parts[future]
+                        folder_id = future.result()
+                        path_to_id_map[parts] = folder_id
+
             socketio.emit('upload_status', {'message': f'Uploading {len(files)} files...'})
 
             files_sorted = sorted(files, key=lambda x: x['size'])
@@ -197,11 +328,7 @@ class DriveService:
 
             max_workers = config.max_workers if hasattr(config, 'max_workers') else DEFAULT_MAX_WORKERS
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                def worker_upload(file_info):
-                    worker_service = self.get_service()
-                    return self.upload_single_file(worker_service, file_info, root_folder_id)
-
-                future_to_file = {executor.submit(worker_upload, f): f for f in files_sorted}
+                future_to_file = {executor.submit(self._worker_upload, f, root_folder_id): f for f in files_sorted}
 
                 for future in as_completed(future_to_file):
                     if state.upload.cancel_requested:
@@ -374,12 +501,7 @@ class DriveService:
             # Parallel download with ThreadPoolExecutor
             max_workers = config.max_workers if hasattr(config, 'max_workers') else DEFAULT_MAX_WORKERS
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                def worker_download(file_info):
-                    state.restore.update_progress(file_info['path'])
-                    worker_service = self.get_service()
-                    return self.download_single_file(worker_service, file_info, full_dest, state.restore)
-
-                future_to_file = {executor.submit(worker_download, f): f for f in files}
+                future_to_file = {executor.submit(self._worker_download, f, full_dest, state.restore): f for f in files}
 
                 for future in as_completed(future_to_file):
                     if state.restore.cancel_requested:
@@ -420,7 +542,6 @@ class DriveService:
     def run_transfer_process(self, items: list, dest_path: str, socketio):
         """Transfer selected files/folders from Google Drive to local destination"""
         try:
-            state.transfer.start(0, 0)
             if not self.credentials_provider.is_authenticated():
                 state.transfer.errors.append("Not authenticated")
                 state.transfer.stop()
@@ -438,6 +559,7 @@ class DriveService:
             
             # Collect all files from selected items
             all_files = []
+            scan_errors = []
             for item in items:
                 if item.get('type') == 'folder':
                     # Recursively list files in folder
@@ -470,11 +592,21 @@ class DriveService:
                             'export_mime': export_mime
                         })
                     except Exception as e:
-                        state.transfer.errors.append(f"Failed to get metadata for {item['name']}: {str(e)}")
-            
+                        scan_errors.append(f"Failed to get metadata for {item['name']}: {str(e)}")
+
+            # Report scan errors even if no files found
+            if scan_errors:
+                state.transfer.errors.extend(scan_errors)
+
+            if not all_files:
+                state.transfer.stop()
+                error_message = 'No files to transfer' + (f'. Errors: {"; ".join(scan_errors)}' if scan_errors else '')
+                socketio.emit('transfer_complete', {'message': error_message})
+                return
+
             total_files = len(all_files)
             total_bytes = sum(f.get('size', 0) for f in all_files)
-            state.transfer.update_total(total_files, total_bytes)
+            state.transfer.start(total_files, total_bytes)
 
             socketio.emit('transfer_started', {
                 'total_files': total_files,
@@ -492,12 +624,7 @@ class DriveService:
             # Parallel download with ThreadPoolExecutor
             max_workers = config.max_workers if hasattr(config, 'max_workers') else DEFAULT_MAX_WORKERS
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                def worker_download(file_info):
-                    state.transfer.update_progress(file_info['path'])
-                    worker_service = self.get_service()
-                    return self.download_single_file(worker_service, file_info, dest_path, state.transfer)
-
-                future_to_file = {executor.submit(worker_download, f): f for f in all_files}
+                future_to_file = {executor.submit(self._worker_download, f, dest_path, state.transfer): f for f in all_files}
 
                 for future in as_completed(future_to_file):
                     if state.transfer.cancel_requested:
