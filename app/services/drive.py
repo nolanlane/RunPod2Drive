@@ -73,7 +73,9 @@ class DriveService:
                         return self.folder_cache[cache_key]
 
                 # API calls outside the global lock
-                query = f"name='{folder_name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
+                # Escape single quotes in folder name for query
+                escaped_name = folder_name.replace("'", "''")
+                query = f"name='{escaped_name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
                 if parent_id:
                     query += f" and '{parent_id}' in parents"
                 else:
@@ -163,6 +165,14 @@ class DriveService:
         file_size = file_info['size']
 
         try:
+            # Check if file still exists and hasn't changed
+            if not os.path.exists(file_path):
+                return {'success': False, 'file': rel_path, 'size': file_size, 'error': 'File no longer exists'}
+            
+            current_size = os.path.getsize(file_path)
+            if current_size != file_size:
+                return {'success': False, 'file': rel_path, 'size': file_size, 'error': f'File size changed ({file_size} -> {current_size})'}
+
             # Get parent folder
             parts = Path(rel_path).parts
             parent_id = root_folder_id
@@ -172,29 +182,52 @@ class DriveService:
             file_name = parts[-1]
             mime_type = mimetypes.guess_type(file_path)[0] or 'application/octet-stream'
 
-            file_metadata = {
-                'name': file_name,
-                'parents': [parent_id]
-            }
+            # Check for existing file with same name (for update instead of duplicate)
+            escaped_name = file_name.replace("'", "''")
+            existing_query = f"name='{escaped_name}' and '{parent_id}' in parents and trashed=false and mimeType!='application/vnd.google-apps.folder'"
+            existing = service.files().list(q=existing_query, spaces='drive', fields='files(id)').execute()
+            existing_files = existing.get('files', [])
+
+            file_metadata = {'name': file_name}
+            
+            # If file exists, update it; otherwise create with parent
+            if existing_files:
+                file_id = existing_files[0]['id']
+                update_mode = True
+            else:
+                file_metadata['parents'] = [parent_id]
+                file_id = None
+                update_mode = False
 
             if file_size == 0:
-                response = service.files().create(body=file_metadata, fields='id, md5Checksum').execute()
+                if update_mode:
+                    response = service.files().update(fileId=file_id, body=file_metadata, fields='id, md5Checksum').execute()
+                else:
+                    response = service.files().create(body=file_metadata, fields='id, md5Checksum').execute()
             elif file_size < RESUMABLE_THRESHOLD:
-                # Simple upload for small files to reduce request overhead
+                # Simple upload with retry logic
                 media = MediaFileUpload(file_path, mimetype=mime_type, resumable=False)
-                response = service.files().create(
-                    body=file_metadata,
-                    media_body=media,
-                    fields='id, md5Checksum'
-                ).execute()
+                retries = 0
+                while True:
+                    try:
+                        if update_mode:
+                            response = service.files().update(fileId=file_id, media_body=media, fields='id, md5Checksum').execute()
+                        else:
+                            response = service.files().create(body=file_metadata, media_body=media, fields='id, md5Checksum').execute()
+                        break
+                    except Exception as e:
+                        retries += 1
+                        if retries > MAX_RETRIES:
+                            raise e
+                        sleep_time = (INITIAL_BACKOFF * (2 ** (retries - 1))) + random.random()
+                        time.sleep(sleep_time)
             else:
                 # Resumable upload for larger files
                 media = MediaFileUpload(file_path, mimetype=mime_type, resumable=True, chunksize=CHUNK_SIZE)
-                request = service.files().create(
-                    body=file_metadata,
-                    media_body=media,
-                    fields='id, md5Checksum'
-                )
+                if update_mode:
+                    request = service.files().update(fileId=file_id, media_body=media, fields='id, md5Checksum')
+                else:
+                    request = service.files().create(body=file_metadata, media_body=media, fields='id, md5Checksum')
 
                 response = None
                 retries = 0
