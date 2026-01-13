@@ -255,9 +255,9 @@ class DriveService:
         except Exception as e:
             return {'success': False, 'file': rel_path, 'size': file_size, 'error': str(e)}
 
-    def list_folders_recursive(self, service, folder_id: str, current_path_parts: tuple = ()) -> Dict[tuple, str]:
-        """Recursively list all folders in a Drive folder to populate cache"""
-        found_folders = {}
+    def _list_folder_children(self, service, folder_id: str) -> List[Dict]:
+        """List immediate child folders of a folder (with pagination)"""
+        children = []
         page_token = None
         while True:
             query = f"'{folder_id}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false"
@@ -268,16 +268,43 @@ class DriveService:
                 pageSize=1000,
                 pageToken=page_token
             ).execute()
-            
-            for item in results.get('files', []):
-                folder_path = current_path_parts + (item['name'],)
-                found_folders[folder_path] = item['id']
-                # Recurse
-                found_folders.update(self.list_folders_recursive(service, item['id'], folder_path))
-            
+            children.extend(results.get('files', []))
             page_token = results.get('nextPageToken')
             if not page_token:
                 break
+        return children
+
+    def list_folders_recursive(self, service, folder_id: str, current_path_parts: tuple = ()) -> Dict[tuple, str]:
+        """List all folders using parallel breadth-first traversal"""
+        found_folders = {}
+        # Queue: list of (folder_id, path_parts) to process
+        current_level = [(folder_id, current_path_parts)]
+        
+        max_workers = int(os.getenv('MAX_WORKERS', '8'))
+        
+        while current_level:
+            next_level = []
+            
+            # Process current level in parallel
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                future_to_info = {
+                    executor.submit(self._list_folder_children, service, fid): (fid, path_parts)
+                    for fid, path_parts in current_level
+                }
+                
+                for future in as_completed(future_to_info):
+                    parent_id, parent_path = future_to_info[future]
+                    try:
+                        children = future.result()
+                        for child in children:
+                            child_path = parent_path + (child['name'],)
+                            found_folders[child_path] = child['id']
+                            next_level.append((child['id'], child_path))
+                    except Exception:
+                        pass  # Skip folders we can't access
+            
+            current_level = next_level
+        
         return found_folders
 
     def run_upload_process(self, config: UploadConfig, socketio):
@@ -359,20 +386,39 @@ class DriveService:
             # Map path parts to IDs for parent lookup
             path_to_id_map = {(): root_folder_id}
             path_to_id_map.update(existing_structure)
+            path_map_lock = threading.Lock()
 
             max_workers = config.max_workers if hasattr(config, 'max_workers') else DEFAULT_MAX_WORKERS
             with ThreadPoolExecutor(max_workers=max_workers) as folder_executor:
                 for depth in sorted(depth_map.keys()):
+                    # Collect folders to create at this depth (under lock)
+                    folders_to_create = []
+                    with path_map_lock:
+                        for folder_parts in depth_map[depth]:
+                            # Skip folders that already exist
+                            if folder_parts in path_to_id_map:
+                                continue
+                            # Get parent ID, skip if parent doesn't exist
+                            parent_path = folder_parts[:-1]
+                            if parent_path not in path_to_id_map:
+                                continue
+                            parent_id = path_to_id_map[parent_path]
+                            folder_name = folder_parts[-1]
+                            folders_to_create.append((folder_parts, parent_id, folder_name))
+                    
+                    # Submit tasks without holding the lock
                     futures_to_parts = {}
-                    for folder_parts in depth_map[depth]:
-                        parent_id = path_to_id_map[folder_parts[:-1]]
-                        folder_name = folder_parts[-1]
+                    for folder_parts, parent_id, folder_name in folders_to_create:
                         futures_to_parts[folder_executor.submit(self._worker_create_folder, parent_id, folder_name)] = folder_parts
                     
                     for future in as_completed(futures_to_parts):
                         parts = futures_to_parts[future]
-                        folder_id = future.result()
-                        path_to_id_map[parts] = folder_id
+                        try:
+                            folder_id = future.result()
+                            with path_map_lock:
+                                path_to_id_map[parts] = folder_id
+                        except Exception as e:
+                            state.upload.errors.append(f"Failed to create folder {'/'.join(parts)}: {str(e)}")
 
             socketio.emit('upload_status', {'message': f'Uploading {len(files)} files...'})
 
