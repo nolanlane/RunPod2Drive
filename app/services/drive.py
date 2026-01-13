@@ -51,7 +51,7 @@ class DriveService:
 
     def get_or_create_folder(self, service, folder_name: str, parent_id: str = None) -> str:
         """Get or create a folder in Google Drive (thread-safe with caching)"""
-        cache_key = f"{parent_id}:{folder_name}"
+        cache_key = f"{parent_id or 'root'}:{folder_name}"
 
         # Quick cache check with minimal lock time
         with self.folder_cache_lock:
