@@ -36,6 +36,8 @@ class DriveService:
         self.credentials_provider = credentials_provider
         self.folder_cache = {}
         self.folder_cache_lock = threading.Lock()
+        self._folder_locks = {}
+        self._folder_lock_refs = {}
         self._thread_local = threading.local()
 
     def get_service(self):
@@ -51,38 +53,63 @@ class DriveService:
         """Get or create a folder in Google Drive (thread-safe with caching)"""
         cache_key = f"{parent_id}:{folder_name}"
 
+        # Quick cache check with minimal lock time
         with self.folder_cache_lock:
-            # Check cache first
             if cache_key in self.folder_cache:
                 return self.folder_cache[cache_key]
+            # Get or create per-key lock for this folder
+            if cache_key not in self._folder_locks:
+                self._folder_locks[cache_key] = threading.Lock()
+                self._folder_lock_refs[cache_key] = 0
+            self._folder_lock_refs[cache_key] += 1
+            key_lock = self._folder_locks[cache_key]
 
-            # If not in cache, check Drive (within lock to prevent duplicate creation)
-            query = f"name='{folder_name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
-            if parent_id:
-                query += f" and '{parent_id}' in parents"
-            else:
-                query += " and 'root' in parents"
+        try:
+            # Per-key lock allows parallel creation of different folders
+            with key_lock:
+                # Double-check cache after acquiring per-key lock
+                with self.folder_cache_lock:
+                    if cache_key in self.folder_cache:
+                        return self.folder_cache[cache_key]
 
-            results = service.files().list(q=query, spaces='drive', fields='files(id, name)').execute()
-            items = results.get('files', [])
+                # API calls outside the global lock
+                query = f"name='{folder_name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
+                if parent_id:
+                    query += f" and '{parent_id}' in parents"
+                else:
+                    query += " and 'root' in parents"
 
-            if items:
-                folder_id = items[0]['id']
-                self.folder_cache[cache_key] = folder_id
+                results = service.files().list(q=query, spaces='drive', fields='files(id, name)').execute()
+                items = results.get('files', [])
+
+                if items:
+                    folder_id = items[0]['id']
+                    with self.folder_cache_lock:
+                        self.folder_cache[cache_key] = folder_id
+                    return folder_id
+
+                # Create if not found
+                file_metadata = {
+                    'name': folder_name,
+                    'mimeType': 'application/vnd.google-apps.folder'
+                }
+                if parent_id:
+                    file_metadata['parents'] = [parent_id]
+
+                folder = service.files().create(body=file_metadata, fields='id').execute()
+                folder_id = folder.get('id')
+                with self.folder_cache_lock:
+                    self.folder_cache[cache_key] = folder_id
                 return folder_id
-
-            # Create if not found
-            file_metadata = {
-                'name': folder_name,
-                'mimeType': 'application/vnd.google-apps.folder'
-            }
-            if parent_id:
-                file_metadata['parents'] = [parent_id]
-
-            folder = service.files().create(body=file_metadata, fields='id').execute()
-            folder_id = folder.get('id')
-            self.folder_cache[cache_key] = folder_id
-            return folder_id
+        finally:
+            # Cleanup: remove lock when no longer needed
+            with self.folder_cache_lock:
+                if cache_key in self._folder_lock_refs:
+                    self._folder_lock_refs[cache_key] -= 1
+                    # Only remove if ref count is 0 AND it's the same lock we used
+                    if self._folder_lock_refs[cache_key] == 0 and self._folder_locks.get(cache_key) is key_lock:
+                        self._folder_locks.pop(cache_key, None)
+                        self._folder_lock_refs.pop(cache_key, None)
 
     def list_folders(self, parent_id: str = None) -> List[Dict]:
         service = self.get_service()
