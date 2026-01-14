@@ -1,6 +1,5 @@
-# Use a modern PyTorch base image compatible with ReForge
-# ReForge often works with PyTorch 2.1+, so we use 2.1.2 which is very stable for SD WebUI
-FROM pytorch/pytorch:2.1.2-cuda12.1-cudnn8-runtime
+# Use a modern PyTorch base image compatible with ReForge (PyTorch 2.4 + CUDA 12.4)
+FROM pytorch/pytorch:2.4.0-cuda12.4-cudnn9-devel
 
 # Set environment variables
 ENV DEBIAN_FRONTEND=noninteractive
@@ -9,6 +8,7 @@ ENV PIP_NO_CACHE_DIR=1
 ENV PATH="/workspace/venv/bin:$PATH"
 
 # Install system dependencies
+# build-essential added for compiling extensions if needed
 RUN apt-get update && apt-get install -y \
     git \
     wget \
@@ -18,6 +18,7 @@ RUN apt-get update && apt-get install -y \
     google-perftools \
     bc \
     python3-venv \
+    build-essential \
     && rm -rf /var/lib/apt/lists/*
 
 # Set up workspace
@@ -27,7 +28,7 @@ WORKDIR /workspace
 RUN git clone https://github.com/Panchovix/stable-diffusion-webui-reForge.git stable-diffusion-webui-reForge
 
 # Install ReForge dependencies
-# We use the requirements_versions.txt we inspected earlier
+# Using requirements_versions.txt as it pins compatible versions
 WORKDIR /workspace/stable-diffusion-webui-reForge
 RUN pip install -r requirements_versions.txt
 
