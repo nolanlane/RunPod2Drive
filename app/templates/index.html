@@ -1292,6 +1292,8 @@
             }
         }
 
+        let uploadSpeedBuffer = [];
+
         function updateProgress(data) {
             const percent = data.total_bytes > 0 ? (data.uploaded_bytes / data.total_bytes * 100) : 0;
             
@@ -1308,17 +1310,34 @@
             document.getElementById('current-file').textContent = data.current_file || 'Waiting for next file...';
             
             if (uploadStartTime) {
-                const elapsed = (Date.now() - uploadStartTime) / 1000;
+                const now = Date.now();
+                const elapsed = (now - uploadStartTime) / 1000;
                 document.getElementById('elapsed-time').textContent = formatDuration(elapsed);
                 
-                if (data.uploaded_bytes > 0 && elapsed > 0) {
-                    const bytesPerSec = data.uploaded_bytes / elapsed;
+                // Calculate moving average speed
+                uploadSpeedBuffer.push({ t: now, b: data.uploaded_bytes });
+                if (uploadSpeedBuffer.length > 20) uploadSpeedBuffer.shift(); // Keep last ~20 updates
+
+                let bytesPerSec = 0;
+                if (uploadSpeedBuffer.length >= 2) {
+                    const first = uploadSpeedBuffer[0];
+                    const last = uploadSpeedBuffer[uploadSpeedBuffer.length - 1];
+                    const dt = (last.t - first.t) / 1000;
+                    const db = last.b - first.b;
+                    if (dt > 0) {
+                        bytesPerSec = db / dt;
+                    }
+                } else if (data.uploaded_bytes > 0 && elapsed > 0) {
+                    bytesPerSec = data.uploaded_bytes / elapsed; // Fallback to average
+                }
+
+                if (bytesPerSec > 0) {
                     const remainingBytes = data.total_bytes - data.uploaded_bytes;
                     const remainingSec = remainingBytes / bytesPerSec;
                     
                     document.getElementById('remaining-time').textContent = formatDuration(remainingSec);
                     document.getElementById('progress-speed').textContent = formatBytes(bytesPerSec) + '/s';
-                } else if (data.processed_files > 0) {
+                } else if (data.processed_files > 0 && elapsed > 0) {
                     // Fallback to file count for estimation if bytes are 0 (e.g. small files)
                     const filesPerSec = data.processed_files / elapsed;
                     const remainingFiles = data.total_files - data.processed_files;
