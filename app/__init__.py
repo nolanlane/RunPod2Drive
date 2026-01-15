@@ -26,4 +26,14 @@ def create_app(config_class=AppConfig):
     app.register_blueprint(api)
     app.register_blueprint(views)
 
+    @app.after_request
+    def add_security_headers(response):
+        response.headers['X-Content-Type-Options'] = 'nosniff'
+        response.headers['X-Frame-Options'] = 'SAMEORIGIN'
+        response.headers['X-XSS-Protection'] = '1; mode=block'
+        response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
+        # Basic CSP to prevent object injection and framing, while allowing CDNs and inline scripts
+        response.headers['Content-Security-Policy'] = "default-src 'self' https: 'unsafe-inline' 'unsafe-eval'; object-src 'none'; base-uri 'self';"
+        return response
+
     return app
