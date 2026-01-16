@@ -26,4 +26,22 @@ def create_app(config_class=AppConfig):
     app.register_blueprint(api)
     app.register_blueprint(views)
 
+    @app.after_request
+    def add_security_headers(response):
+        """Add security headers to every response"""
+        response.headers['X-Content-Type-Options'] = 'nosniff'
+        response.headers['X-Frame-Options'] = 'SAMEORIGIN'
+        response.headers['X-XSS-Protection'] = '1; mode=block'
+        response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
+        # Basic CSP that allows internal resources and styles
+        # Adjust 'script-src' and others if external CDNs are used
+        response.headers['Content-Security-Policy'] = (
+            "default-src 'self'; "
+            "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.socket.io; "
+            "style-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com; "
+            "img-src 'self' data:; "
+            "font-src 'self' data:;"
+        )
+        return response
+
     return app
