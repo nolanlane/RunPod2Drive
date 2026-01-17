@@ -92,6 +92,11 @@ def api_config():
     try:
         data = request.json
         config = UploadConfig(**data)
+
+        # Security check: Ensure source_path is safe
+        if not is_safe_path(config.source_path):
+            return jsonify({'error': 'Access denied: Path is outside of /workspace'}), 403
+
         save_upload_config(config, app_config.CONFIG_FILE)
         return jsonify({'success': True, 'config': config.model_dump()})
     except Exception as e:
@@ -148,6 +153,9 @@ def api_upload_start():
         return jsonify({'error': 'Not authenticated with Google Drive'}), 401
 
     config = load_upload_config(app_config.CONFIG_FILE)
+
+    if not is_safe_path(config.source_path):
+        return jsonify({'error': 'Access denied: Path is outside of /workspace'}), 403
 
     # Need access to socketio to emit events from background thread
     socketio = current_app.extensions['socketio']
