@@ -1,5 +1,6 @@
 import json
 import os
+import secrets
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -85,6 +86,31 @@ PRESETS = {
     }
 }
 
+def load_or_generate_secret_key() -> str:
+    """
+    Load secret key from .secret_key file or generate a new one.
+    This ensures we don't rely on hardcoded defaults while persisting sessions across restarts.
+    """
+    secret_file = '.secret_key'
+    if os.path.exists(secret_file):
+        try:
+            with open(secret_file, 'r') as f:
+                key = f.read().strip()
+                if key:
+                    return key
+        except Exception:
+            pass
+
+    # Generate new secure key
+    key = secrets.token_hex(32)
+    try:
+        with open(secret_file, 'w') as f:
+            f.write(key)
+    except Exception:
+        pass # If we can't write, return ephemeral key
+
+    return key
+
 class UploadConfig(BaseModel):
     """Configuration for upload settings"""
     source_path: str = Field(default='/workspace')
@@ -102,7 +128,8 @@ class AppConfig(BaseSettings):
         extra="ignore"
     )
     
-    SECRET_KEY: str = Field(default='dev-secret-key-change-in-prod')
+    # Securely generate secret key if not provided in env
+    SECRET_KEY: str = Field(default_factory=load_or_generate_secret_key)
     OAUTHLIB_INSECURE_TRANSPORT: str = Field(default='1')  # Allow OAuth over HTTP for dev
     PUBLIC_URL: Optional[str] = None
 
