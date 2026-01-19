@@ -1,8 +1,37 @@
 import json
 import os
+import secrets
+from pathlib import Path
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+def get_secret_key() -> str:
+    """
+    Get or create a persistent secret key.
+    1. Check for .secret_key file
+    2. If missing, generate new key and save it
+    3. Return key
+    """
+    secret_file = Path('.secret_key')
+    try:
+        if secret_file.exists():
+            key = secret_file.read_text().strip()
+            if key:
+                return key
+
+        # Generate secure random key
+        key = secrets.token_hex(32)
+        try:
+            # Try to save for persistence
+            secret_file.write_text(key)
+        except OSError:
+            # If write fails (e.g. read-only fs), return key anyway
+            pass
+        return key
+    except Exception:
+        # Fallback for any other error
+        return secrets.token_hex(32)
 
 # Presets configuration
 PRESETS = {
@@ -102,7 +131,8 @@ class AppConfig(BaseSettings):
         extra="ignore"
     )
     
-    SECRET_KEY: str = Field(default='dev-secret-key-change-in-prod')
+    # Use default_factory to generate a secure key if not provided in env
+    SECRET_KEY: str = Field(default_factory=get_secret_key)
     OAUTHLIB_INSECURE_TRANSPORT: str = Field(default='1')  # Allow OAuth over HTTP for dev
     PUBLIC_URL: Optional[str] = None
 
