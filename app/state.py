@@ -14,6 +14,7 @@ class ProgressState:
         self.processed_bytes: int = 0  # uploaded or downloaded bytes
         self.errors: List[str] = []
         self.start_time: Optional[float] = None
+        self.last_update_time: Optional[float] = None
         self.cancel_requested: bool = False
 
     def start(self, total_files: int, total_bytes: int):
@@ -27,6 +28,7 @@ class ProgressState:
             self.processed_bytes = 0
             self.errors = []
             self.start_time = time.time()
+            self.last_update_time = self.start_time
             self.cancel_requested = False
 
     def update_progress(self, current_file: str, bytes_processed: int = 0, file_completed: bool = False, error: str = None):
@@ -34,6 +36,7 @@ class ProgressState:
             self.current_file = current_file
             if bytes_processed > 0:
                 self.processed_bytes += bytes_processed
+                self.last_update_time = time.time()
 
             if file_completed:
                 self.processed_files += 1
@@ -72,6 +75,7 @@ class ProgressState:
                 'downloaded_bytes': self.processed_bytes, # API compat
                 'errors': self.errors[:],
                 'start_time': self.start_time,
+                'last_update_time': self.last_update_time,
                 'cancel_requested': self.cancel_requested
             }
 
