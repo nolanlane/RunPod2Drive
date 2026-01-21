@@ -2,6 +2,7 @@
 credentials.json
 token.json
 config.json
+.secret_key
 
 # Python
 __pycache__/

@@ -1,5 +1,6 @@
 import json
 import os
+import secrets
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -95,6 +96,26 @@ class UploadConfig(BaseModel):
     preset: str = Field(default='default')
     max_workers: int = Field(default=8, ge=1, le=15)  # 1-15 workers, default 8
 
+def get_secret_key():
+    """Get or create a persistent secret key"""
+    secret_file = '.secret_key'
+    if os.path.exists(secret_file):
+        try:
+            with open(secret_file, 'r') as f:
+                return f.read().strip()
+        except IOError:
+            pass
+
+    # Generate new key
+    key = secrets.token_hex(32)
+    try:
+        with open(secret_file, 'w') as f:
+            f.write(key)
+    except IOError:
+        # Fallback for read-only filesystems or permission errors
+        pass
+    return key
+
 class AppConfig(BaseSettings):
     """Application level configuration from environment variables"""
     model_config = SettingsConfigDict(
@@ -102,7 +123,7 @@ class AppConfig(BaseSettings):
         extra="ignore"
     )
     
-    SECRET_KEY: str = Field(default='dev-secret-key-change-in-prod')
+    SECRET_KEY: str = Field(default_factory=get_secret_key)
     OAUTHLIB_INSECURE_TRANSPORT: str = Field(default='1')  # Allow OAuth over HTTP for dev
     PUBLIC_URL: Optional[str] = None
 
