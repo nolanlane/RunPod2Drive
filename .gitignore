@@ -25,3 +25,4 @@ server.log
 # Agent reference file
 agent.md
 .windsurf/lifeguard.yaml
+.secret_key
