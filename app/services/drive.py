@@ -13,7 +13,7 @@ from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
 from google.oauth2.credentials import Credentials
 
 from app.state import state
-from app.services.files import get_files_to_upload
+from app.services.files import get_files_to_upload, is_safe_path
 from app.config import UploadConfig
 
 # Constants
@@ -570,6 +570,11 @@ class DriveService:
             progress_state = state.restore
 
         full_path = os.path.join(dest_path, rel_path)
+
+        # Security check: Ensure the file path is within the destination directory
+        if not is_safe_path(full_path, dest_path):
+            return {'success': False, 'file': rel_path, 'size': file_size, 'error': 'Security violation: File path traverses outside destination'}
+
         parent_dir = os.path.dirname(full_path)
         
         last_error = None
